@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { detectMediaType, hasSentinel, makeSentinel, mediaTypeFromExtension, parseArgs, splitTextWithSentinels } from "../src/media.ts";
+import { autoAttachMedia, detectMediaType, hasSentinel, makeSentinel, mediaTypeFromExtension, parseArgs, splitTextWithSentinels } from "../src/media.ts";
 
 test("parseArgs extracts url only", () => {
 	assert.deepEqual(parseArgs("https://example.com/a.png"), { url: "https://example.com/a.png", prompt: "" });
@@ -62,4 +62,44 @@ test("splitTextWithSentinels handles mixed text and multiple sentinels", () => {
 
 test("splitTextWithSentinels keeps plain text intact", () => {
 	assert.deepEqual(splitTextWithSentinels("no media here"), [{ type: "text", text: "no media here" }]);
+});
+
+test("autoAttachMedia wraps URLs with recognized media extensions", () => {
+	assert.equal(
+		autoAttachMedia("check https://x.com/a.png please"),
+		"check [[pi-media:https://x.com/a.png|image/png]] please",
+	);
+});
+
+test("autoAttachMedia wraps multiple media URLs", () => {
+	assert.equal(
+		autoAttachMedia("https://x.com/a.pdf and https://x.com/b.mp3"),
+		"[[pi-media:https://x.com/a.pdf|application/pdf]] and [[pi-media:https://x.com/b.mp3|audio/mpeg]]",
+	);
+});
+
+test("autoAttachMedia leaves non-media URLs and plain text alone", () => {
+	assert.equal(autoAttachMedia("see https://github.com/foo/bar for context"), undefined);
+	assert.equal(autoAttachMedia("no urls at all"), undefined);
+	assert.equal(autoAttachMedia("https://x.com/page.html?q=1#frag is a page"), undefined);
+});
+
+test("autoAttachMedia does not double-wrap existing sentinels", () => {
+	const already = "look at [[pi-media:https://x.com/a.png|image/png]]";
+	assert.equal(autoAttachMedia(already), undefined);
+});
+
+test("autoAttachMedia excludes trailing punctuation from the URL", () => {
+	assert.equal(
+		autoAttachMedia("what is this (https://x.com/a.png)?"),
+		"what is this ([[pi-media:https://x.com/a.png|image/png]])?",
+	);
+	assert.equal(autoAttachMedia("read https://x.com/doc.md."), "read [[pi-media:https://x.com/doc.md|text/markdown]].");
+});
+
+test("autoAttachMedia handles query strings on media URLs", () => {
+	assert.equal(
+		autoAttachMedia("https://cdn.x.com/a.mp3?token=abc"),
+		"[[pi-media:https://cdn.x.com/a.mp3?token=abc|audio/mpeg]]",
+	);
 });

@@ -67,6 +67,30 @@ export async function detectMediaType(url: string, fetchFn: typeof fetch = fetch
 	return mediaTypeFromExtension(url) ?? (await headContentType(url, fetchFn)) ?? "application/octet-stream";
 }
 
+const URL_RE = /https?:\/\/\S+/g;
+const SENTINEL_PREFIX = "[[pi-media:";
+// .html links in chat are usually references to browse, not attachments
+const AUTO_ATTACH_EXCLUDED = new Set(["text/html"]);
+
+export function autoAttachMedia(text: string) {
+	let changed = false;
+	const result = text.replace(URL_RE, (match, offset: number) => {
+		if (text.slice(Math.max(0, offset - SENTINEL_PREFIX.length), offset) === SENTINEL_PREFIX) return match;
+		const trailing = match.match(/[)\],.;:!?]+$/)?.[0] ?? "";
+		const url = trailing ? match.slice(0, -trailing.length) : match;
+		let mediaType;
+		try {
+			mediaType = mediaTypeFromExtension(url);
+		} catch {
+			return match;
+		}
+		if (!mediaType || AUTO_ATTACH_EXCLUDED.has(mediaType)) return match;
+		changed = true;
+		return makeSentinel(url, mediaType) + trailing;
+	});
+	return changed ? result : undefined;
+}
+
 export type ContentPart = { type: "text"; text: string } | { type: "file"; data: string; mediaType: string };
 
 export function hasSentinel(text: string) {

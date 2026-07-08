@@ -1,9 +1,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { detectMediaType, makeSentinel, parseArgs } from "./media.ts";
+import { autoAttachMedia, detectMediaType, makeSentinel, parseArgs } from "./media.ts";
 import { rewritePayload } from "./rewrite.ts";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("before_provider_request", async (event) => rewritePayload(event.payload));
+
+	pi.on("input", async (event) => {
+		const text = autoAttachMedia(event.text);
+		return text === undefined ? { action: "continue" } : { action: "transform", text };
+	});
 
 	pi.registerCommand("media", {
 		description: "Send a media URL (image, audio, document…) to the model as an attachment",
