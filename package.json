@@ -1,0 +1,43 @@
+{
+  "name": "@8monkey/pi-media",
+  "version": "0.1.0",
+  "description": "Pi extension that sends media URLs to the upstream provider as attachment content blocks.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/8monkey-ai/pi-media.git"
+  },
+  "homepage": "https://github.com/8monkey-ai/pi-media#readme",
+  "bugs": "https://github.com/8monkey-ai/pi-media/issues",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^22",
+    "typescript": "^5"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "media",
+    "attachments",
+    "url"
+  ]
+}
