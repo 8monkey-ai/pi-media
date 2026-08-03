@@ -1,7 +1,7 @@
 {
   "name": "@8monkey/pi-media",
   "version": "0.1.0",
-  "description": "Pi extension that sends media URLs to the upstream provider as attachment content blocks.",
+  "description": "Pi extension that attaches local media files mentioned with @ to the request.",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -38,6 +38,6 @@
     "pi",
     "media",
     "attachments",
-    "url"
+    "files"
   ]
 }

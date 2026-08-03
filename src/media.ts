@@ -1,114 +1,90 @@
-const SENTINEL_RE = /\[\[pi-media:(https?:\/\/[^\s|\]]+)\|([^\s|\]]+)\]\]/g;
+import { stat } from "node:fs/promises";
+import { resolve } from "node:path";
 
-export function makeSentinel(url: string, mediaType: string) {
-	return `[[pi-media:${url}|${mediaType}]]`;
-}
+const MARKER_RE = /\[\[pi-media:([^|\]]+)\|([^|\]]+)\]\]/g;
 
-export function parseArgs(args: string) {
-	const trimmed = args.trim();
-	if (!trimmed) return undefined;
-	const spaceIndex = trimmed.search(/\s/);
-	const url = spaceIndex === -1 ? trimmed : trimmed.slice(0, spaceIndex);
-	const prompt = spaceIndex === -1 ? "" : trimmed.slice(spaceIndex).trim();
-	if (!/^https?:\/\//i.test(url)) return undefined;
-	try {
-		new URL(url);
-	} catch {
-		return undefined;
-	}
-	return { url, prompt };
-}
-
+// Input types Gemini models accept. Everything else stays plain text for pi's read tool.
+// https://ai.google.dev/gemini-api/docs/generate-content/{image,audio,video,document}-understanding
 const MIME_BY_EXTENSION: Record<string, string> = {
 	png: "image/png",
 	jpg: "image/jpeg",
 	jpeg: "image/jpeg",
-	gif: "image/gif",
 	webp: "image/webp",
-	svg: "image/svg+xml",
-	mp3: "audio/mpeg",
+	gif: "image/gif",
+	heic: "image/heic",
+	heif: "image/heif",
 	wav: "audio/wav",
-	ogg: "audio/ogg",
-	m4a: "audio/mp4",
+	mp3: "audio/mpeg",
+	aac: "audio/aac",
 	flac: "audio/flac",
+	ogg: "audio/ogg",
+	aiff: "audio/aiff",
+	aif: "audio/aiff",
 	mp4: "video/mp4",
-	webm: "video/webm",
 	mov: "video/quicktime",
+	webm: "video/webm",
+	mpeg: "video/mpeg",
+	mpg: "video/mpeg",
+	avi: "video/avi",
+	wmv: "video/wmv",
+	flv: "video/x-flv",
+	"3gp": "video/3gpp",
 	pdf: "application/pdf",
-	md: "text/markdown",
-	markdown: "text/markdown",
-	txt: "text/plain",
-	csv: "text/csv",
-	json: "application/json",
-	html: "text/html",
-	docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-	pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-	xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
-export function mediaTypeFromExtension(url: string) {
-	const path = new URL(url).pathname;
-	const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-	return MIME_BY_EXTENSION[ext];
+// ponytail: files above this are left as plain @paths — base64 in memory would risk an OOM.
+// Raise it, or upload and send a URL instead, if large video matters.
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+const AT_PATH_RE = /(?:^|[\s([{])@(?:"([^"]+)"|(\S+))/g;
+const TRAILING_PUNCTUATION_RE = /[)\],.;:!?]+$/;
+
+export function makeMarker(path: string, mediaType: string) {
+	return `[[pi-media:${path}|${mediaType}]]`;
 }
 
-async function headContentType(url: string, fetchFn: typeof fetch) {
+function mediaTypeFromExtension(path: string) {
+	return MIME_BY_EXTENSION[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];
+}
+
+async function isAttachable(path: string) {
 	try {
-		const res = await fetchFn(url, { method: "HEAD", signal: AbortSignal.timeout(5000) });
-		const contentType = res.headers.get("content-type");
-		if (!contentType) return undefined;
-		return contentType.split(";")[0].trim() || undefined;
+		const stats = await stat(path);
+		return stats.isFile() && stats.size > 0 && stats.size <= MAX_ATTACHMENT_BYTES;
 	} catch {
-		return undefined;
+		return false;
 	}
 }
 
-export async function detectMediaType(url: string, fetchFn: typeof fetch = fetch) {
-	return mediaTypeFromExtension(url) ?? (await headContentType(url, fetchFn)) ?? "application/octet-stream";
-}
-
-const URL_RE = /https?:\/\/\S+/g;
-const SENTINEL_PREFIX = "[[pi-media:";
-// .html links in chat are usually references to browse, not attachments
-const AUTO_ATTACH_EXCLUDED = new Set(["text/html"]);
-
-export function autoAttachMedia(text: string) {
-	let changed = false;
-	const result = text.replace(URL_RE, (match, offset: number) => {
-		if (text.slice(Math.max(0, offset - SENTINEL_PREFIX.length), offset) === SENTINEL_PREFIX) return match;
-		const trailing = match.match(/[)\],.;:!?]+$/)?.[0] ?? "";
-		const url = trailing ? match.slice(0, -trailing.length) : match;
-		let mediaType;
-		try {
-			mediaType = mediaTypeFromExtension(url);
-		} catch {
-			return match;
-		}
-		if (!mediaType || AUTO_ATTACH_EXCLUDED.has(mediaType)) return match;
-		changed = true;
-		return makeSentinel(url, mediaType) + trailing;
-	});
-	return changed ? result : undefined;
-}
-
-export type ContentPart = { type: "text"; text: string } | { type: "file"; data: string; mediaType: string };
-
-export function hasSentinel(text: string) {
-	SENTINEL_RE.lastIndex = 0;
-	return SENTINEL_RE.test(text);
-}
-
-export function splitTextWithSentinels(text: string): ContentPart[] {
-	const parts: ContentPart[] = [];
+export async function attachLocalMedia(text: string, cwd: string) {
+	let result = "";
 	let last = 0;
-	SENTINEL_RE.lastIndex = 0;
-	for (const match of text.matchAll(SENTINEL_RE)) {
+	for (const match of text.matchAll(AT_PATH_RE)) {
+		const quoted = match[1];
+		const trailing = quoted ? "" : (match[2].match(TRAILING_PUNCTUATION_RE)?.[0] ?? "");
+		const mention = quoted ?? match[2].slice(0, match[2].length - trailing.length);
+		const mediaType = mediaTypeFromExtension(mention);
+		if (!mediaType) continue;
+		const path = resolve(cwd, mention);
+		if (!(await isAttachable(path))) continue;
+		result += text.slice(last, match.index + match[0].indexOf("@")) + makeMarker(path, mediaType) + trailing;
+		last = match.index + match[0].length;
+	}
+	return last === 0 ? undefined : result + text.slice(last);
+}
+
+type MediaSegment = { type: "text"; text: string } | { type: "media"; path: string; mediaType: string };
+
+export function splitMarkers(text: string): MediaSegment[] {
+	const segments: MediaSegment[] = [];
+	let last = 0;
+	for (const match of text.matchAll(MARKER_RE)) {
 		const before = text.slice(last, match.index).trim();
-		if (before) parts.push({ type: "text", text: before });
-		parts.push({ type: "file", data: match[1], mediaType: match[2] });
+		if (before) segments.push({ type: "text", text: before });
+		segments.push({ type: "media", path: match[1], mediaType: match[2] });
 		last = match.index + match[0].length;
 	}
 	const after = text.slice(last).trim();
-	if (after) parts.push({ type: "text", text: after });
-	return parts;
+	if (after) segments.push({ type: "text", text: after });
+	return segments;
 }

@@ -1,105 +1,62 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { autoAttachMedia, detectMediaType, hasSentinel, makeSentinel, mediaTypeFromExtension, parseArgs, splitTextWithSentinels } from "../src/media.ts";
+import { attachLocalMedia, makeMarker, splitMarkers } from "../src/media.ts";
 
-test("parseArgs extracts url only", () => {
-	assert.deepEqual(parseArgs("https://example.com/a.png"), { url: "https://example.com/a.png", prompt: "" });
+async function fixtureDir(files: Record<string, string>) {
+	const dir = await mkdtemp(join(tmpdir(), "pi-media-"));
+	for (const [name, content] of Object.entries(files)) await writeFile(join(dir, name), content);
+	return dir;
+}
+
+test("attaches an @-mentioned media file", async () => {
+	const dir = await fixtureDir({ "report.pdf": "%PDF-1.4" });
+	assert.equal(
+		await attachLocalMedia("summarize @report.pdf please", dir),
+		`summarize ${makeMarker(join(dir, "report.pdf"), "application/pdf")} please`,
+	);
 });
 
-test("parseArgs extracts url and prompt", () => {
-	assert.deepEqual(parseArgs("  https://example.com/doc.md  what is this about?  "), {
-		url: "https://example.com/doc.md",
-		prompt: "what is this about?",
-	});
+test("attaches quoted paths with spaces and multiple mentions", async () => {
+	const dir = await fixtureDir({ "my shot.png": "png", "clip.mp3": "mp3" });
+	assert.equal(
+		await attachLocalMedia('@"my shot.png" and @clip.mp3', dir),
+		`${makeMarker(join(dir, "my shot.png"), "image/png")} and ${makeMarker(join(dir, "clip.mp3"), "audio/mpeg")}`,
+	);
 });
 
-test("parseArgs rejects empty and non-http input", () => {
-	assert.equal(parseArgs(""), undefined);
-	assert.equal(parseArgs("   "), undefined);
-	assert.equal(parseArgs("ftp://example.com/a.png"), undefined);
-	assert.equal(parseArgs("what is this?"), undefined);
+test("keeps trailing punctuation outside the mention", async () => {
+	const dir = await fixtureDir({ "invoice.pdf": "%PDF-1.4", "a.png": "png" });
+	const marker = makeMarker(join(dir, "invoice.pdf"), "application/pdf");
+	assert.equal(await attachLocalMedia("what is in @invoice.pdf?", dir), `what is in ${marker}?`);
+	assert.equal(
+		await attachLocalMedia("see (@a.png), then @invoice.pdf.", dir),
+		`see (${makeMarker(join(dir, "a.png"), "image/png")}), then ${marker}.`,
+	);
 });
 
-test("mediaTypeFromExtension maps common extensions", () => {
-	assert.equal(mediaTypeFromExtension("https://x.com/a.PNG"), "image/png");
-	assert.equal(mediaTypeFromExtension("https://x.com/a.mp3?v=1"), "audio/mpeg");
-	assert.equal(mediaTypeFromExtension("https://x.com/doc.md"), "text/markdown");
-	assert.equal(mediaTypeFromExtension("https://x.com/doc.pdf"), "application/pdf");
-	assert.equal(mediaTypeFromExtension("https://x.com/no-extension"), undefined);
+test("leaves files Gemini cannot take, unknown extensions, missing and empty files untouched", async () => {
+	const dir = await fixtureDir({ "notes.md": "# hi", "script.sh": "echo", "empty.pdf": "", "report.docx": "x" });
+	assert.equal(await attachLocalMedia("read @notes.md and @script.sh", dir), undefined);
+	assert.equal(await attachLocalMedia("open @report.docx", dir), undefined);
+	assert.equal(await attachLocalMedia("see @absent.pdf", dir), undefined);
+	assert.equal(await attachLocalMedia("@empty.pdf", dir), undefined);
+	assert.equal(await attachLocalMedia("no mentions here", dir), undefined);
 });
 
-test("detectMediaType falls back to HEAD content-type", async () => {
-	const fetchStub = async () =>
-		new Response(null, { headers: { "content-type": "text/markdown; charset=utf-8" } });
-	assert.equal(await detectMediaType("https://x.com/page", fetchStub as typeof fetch), "text/markdown");
+test("ignores an email-like mention that is not a path", async () => {
+	const dir = await fixtureDir({});
+	assert.equal(await attachLocalMedia("mail me at someone@example.com", dir), undefined);
 });
 
-test("detectMediaType defaults to octet-stream when HEAD fails", async () => {
-	const fetchStub = async () => {
-		throw new Error("network down");
-	};
-	assert.equal(await detectMediaType("https://x.com/page", fetchStub as unknown as typeof fetch), "application/octet-stream");
-});
-
-test("sentinel roundtrip", () => {
-	const s = makeSentinel("https://x.com/a.png", "image/png");
-	assert.equal(s, "[[pi-media:https://x.com/a.png|image/png]]");
-	assert.ok(hasSentinel(s));
-	assert.ok(!hasSentinel("plain text"));
-	assert.deepEqual(splitTextWithSentinels(s), [{ type: "file", data: "https://x.com/a.png", mediaType: "image/png" }]);
-});
-
-test("splitTextWithSentinels handles mixed text and multiple sentinels", () => {
-	const text = `look at this\n\n${makeSentinel("https://x.com/a.png", "image/png")}\nand this ${makeSentinel("https://x.com/b.mp3", "audio/mpeg")} thanks`;
-	assert.deepEqual(splitTextWithSentinels(text), [
-		{ type: "text", text: "look at this" },
-		{ type: "file", data: "https://x.com/a.png", mediaType: "image/png" },
-		{ type: "text", text: "and this" },
-		{ type: "file", data: "https://x.com/b.mp3", mediaType: "audio/mpeg" },
+test("splits text around markers", () => {
+	const marker = makeMarker("/tmp/a.png", "image/png");
+	assert.deepEqual(splitMarkers(`look\n\n${marker}\nthanks`), [
+		{ type: "text", text: "look" },
+		{ type: "media", path: "/tmp/a.png", mediaType: "image/png" },
 		{ type: "text", text: "thanks" },
 	]);
-});
-
-test("splitTextWithSentinels keeps plain text intact", () => {
-	assert.deepEqual(splitTextWithSentinels("no media here"), [{ type: "text", text: "no media here" }]);
-});
-
-test("autoAttachMedia wraps URLs with recognized media extensions", () => {
-	assert.equal(
-		autoAttachMedia("check https://x.com/a.png please"),
-		"check [[pi-media:https://x.com/a.png|image/png]] please",
-	);
-});
-
-test("autoAttachMedia wraps multiple media URLs", () => {
-	assert.equal(
-		autoAttachMedia("https://x.com/a.pdf and https://x.com/b.mp3"),
-		"[[pi-media:https://x.com/a.pdf|application/pdf]] and [[pi-media:https://x.com/b.mp3|audio/mpeg]]",
-	);
-});
-
-test("autoAttachMedia leaves non-media URLs and plain text alone", () => {
-	assert.equal(autoAttachMedia("see https://github.com/foo/bar for context"), undefined);
-	assert.equal(autoAttachMedia("no urls at all"), undefined);
-	assert.equal(autoAttachMedia("https://x.com/page.html?q=1#frag is a page"), undefined);
-});
-
-test("autoAttachMedia does not double-wrap existing sentinels", () => {
-	const already = "look at [[pi-media:https://x.com/a.png|image/png]]";
-	assert.equal(autoAttachMedia(already), undefined);
-});
-
-test("autoAttachMedia excludes trailing punctuation from the URL", () => {
-	assert.equal(
-		autoAttachMedia("what is this (https://x.com/a.png)?"),
-		"what is this ([[pi-media:https://x.com/a.png|image/png]])?",
-	);
-	assert.equal(autoAttachMedia("read https://x.com/doc.md."), "read [[pi-media:https://x.com/doc.md|text/markdown]].");
-});
-
-test("autoAttachMedia handles query strings on media URLs", () => {
-	assert.equal(
-		autoAttachMedia("https://cdn.x.com/a.mp3?token=abc"),
-		"[[pi-media:https://cdn.x.com/a.mp3?token=abc|audio/mpeg]]",
-	);
+	assert.deepEqual(splitMarkers("no media here"), [{ type: "text", text: "no media here" }]);
 });
