@@ -30,7 +30,7 @@ The attachment is re-sent on every turn, so you can keep asking about the same f
 
 ## Providers
 
-Attachments are sent today for models served through the [Hebo](https://hebo.ai/docs/gateway/attachments) gateway. On other providers, such as Anthropic direct, Bedrock or the Gemini API, the mention is passed along as text and nothing breaks.
+Attachments go out as a chat-completions content part, `{"type":"file","file":{"data":"<base64>","media_type":"<mime>"}}`. Gateways that accept that shape receive the file. Anywhere else, Anthropic direct, Bedrock or the Gemini API for instance, the mention travels on as text and nothing breaks.
 
 Planned, in rough order: Gemini API and Vertex, Anthropic and Bedrock (images and PDFs only), OpenAI, OpenRouter.
 
