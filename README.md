@@ -80,9 +80,10 @@ On each request, pi-media looks at the API of the model and formats the stored f
 | Gemini API (`google-generative-ai`) and Vertex AI (`google-vertex`) | Audio, video, PDF | `{"inlineData":{"mimeType":"<mime>","data":"<base64>"}}` |
 | Anthropic Messages (`anthropic-messages`) | PDF | `{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"<base64>"}}` |
 | Amazon Bedrock Converse (`bedrock-converse-stream`) | PDF, video, audio | `document` (format `pdf`), `video` and `audio` blocks with the raw bytes |
+| OpenAI Responses, Azure OpenAI Responses and OpenAI Codex (`openai-responses`, `azure-openai-responses`, `openai-codex-responses`) | PDF | `{"type":"input_file","filename":"<name>","file_data":"data:application/pdf;base64,<base64>"}` |
 | All other APIs | None | The path stays as text |
 
-For all other APIs, for example Mistral and the OpenAI Responses API, the model gets your message with the path as text, and no file.
+For all other APIs, for example Mistral, the model gets your message with the path as text, and no file.
 
 Chat Completions gets video, and audio other than wav and mp3, as path text. A provider that does not accept these parts returns an error. The error shows in the UI unchanged.
 
@@ -94,7 +95,9 @@ The Anthropic Messages API has no block for audio or video, so the model gets th
 
 Bedrock gets a document name made from the file name, with only letters, digits, single spaces, hyphens, parentheses and square brackets. Video and audio types that Converse has no format for stay as text.
 
-Planned: the OpenAI Responses API and OpenRouter.
+The Responses API gets audio and video as path text. OpenAI accepts at most 50 MB of files in one request.
+
+Planned: OpenRouter.
 
 ## Limits
 
