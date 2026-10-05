@@ -44,10 +44,13 @@ No runtime dependencies, no build step. Runs under Node and Bun.
 
 ## Development
 
+Run all checks before you commit. This command runs the Biome format and lint checks, the type check, and the tests:
+
 ```bash
-node --test
-npm run typecheck
+npm run check
 ```
+
+To fix the format of the files, run `npm run format`.
 
 ## License
 
