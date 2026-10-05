@@ -1,6 +1,6 @@
 # pi-media
 
-Attach local images, audio, video and PDFs to your messages with pi's `@` mention. `@report.pdf` reaches the model as a real attachment, instead of a path it has to open with the `read` tool.
+Attach local images, audio, video and PDFs to your messages with pi's `@` mention. The model gets `@report.pdf` as an attachment. It does not have to open the path with the `read` tool.
 
 ## Install
 
@@ -11,34 +11,46 @@ pi install npm:@8monkey/pi-media
 ## Usage
 
 ```
-what's wrong with this recording? @debug-session.mp3
+what is in this screenshot? @screen.png
+what is wrong with this recording? @debug-session.mp3
 compare @"Q3 report.pdf" with @q4-report.pdf
 ```
 
-Paths resolve against the session's working directory. Quote paths that contain spaces, which is what pi's `@` autocomplete does for you.
-
-The attachment is re-sent on every turn, so you can keep asking about the same file later in the conversation.
+Paths resolve against the working directory of the session. Put quotes around paths that contain spaces. Pi's `@` autocomplete does this for you.
 
 ## Supported files
 
-| Kind | Extensions |
+| Kind | How pi-media finds the type |
 |---|---|
-| Image | `png` `jpg` `jpeg` `webp` `gif` `heic` `heif` |
-| Audio | `wav` `mp3` `aac` `flac` `ogg` `aiff` `aif` |
-| Video | `mp4` `mov` `webm` `mpeg` `mpg` `avi` `wmv` `flv` `3gp` |
-| Document | `pdf` |
+| Image: PNG, JPEG, GIF, WebP, BMP | From the first bytes of the file, with pi's own image check |
+| Audio | Extension: `wav` `mp3` `aac` `flac` `ogg` `aiff` `aif` |
+| Video | Extension: `mp4` `mov` `webm` `mpeg` `mpg` `avi` `wmv` `flv` `3gp` |
+| Document | Extension: `pdf` |
 
-## Providers
+## Images
 
-Attachments go out as a chat-completions content part, `{"type":"file","file":{"data":"<base64>","media_type":"<mime>"}}`. Gateways that accept that shape receive the file. Anywhere else, Anthropic direct, Bedrock or the Gemini API for instance, the mention travels on as text and nothing breaks.
+pi-media gives images to pi, and pi handles them the same way as all other images:
 
-Planned, in rough order: Gemini API and Vertex, Anthropic and Bedrock (images and PDFs only), OpenAI, OpenRouter.
+- Pi resizes large images.
+- Pi stores the images in the session with your message.
+- If the model does not accept images, pi sends a placeholder text.
+- The `blockImages` setting applies.
+
+Your message text stays as you typed it, with the `@` path in it.
+
+pi-media does not attach HEIC and HEIF files, because pi does not detect them. A file with an image extension but other content stays as text.
+
+## Audio, video and PDFs
+
+pi-media replaces the mention with a marker in your message. On each request, it reads the file again and sends it as a chat-completions content part: `{"type":"file","file":{"data":"<base64>","media_type":"<mime>"}}`. Gateways that accept this shape get the file. Other providers, for example Anthropic direct, Bedrock or the Gemini API, get the mention as text.
+
+Planned, in approximate order: Gemini API and Vertex, Anthropic and Bedrock (PDFs only), OpenAI, OpenRouter.
 
 ## Limits
 
-- A mention that doesn't point at an existing, non-empty file stays as you typed it.
-- Files over 20 MB are left as plain `@path` text. Host large media and reference it another way.
-- Errors from the provider, for instance an unsupported media kind or an oversized request, appear in the UI unchanged.
+- A mention that does not point to an existing, non-empty file stays as you typed it.
+- pi-media does not attach files larger than 20 MB. The mention stays as text.
+- Errors from the provider, for example an unsupported media kind or a request that is too large, show in the UI unchanged.
 
 No runtime dependencies, no build step. Runs under Node and Bun.
 

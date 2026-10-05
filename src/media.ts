@@ -1,18 +1,15 @@
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
+import { detectSupportedImageMimeTypeFromFile, type InputEvent } from "@earendil-works/pi-coding-agent";
+
+type ImageContent = NonNullable<InputEvent["images"]>[number];
 
 const MARKER_RE = /\[\[pi-media:([^|\]]+)\|([^|\]]+)\]\]/g;
 
-// Input types Gemini models accept. Everything else stays plain text for pi's read tool.
-// https://ai.google.dev/gemini-api/docs/generate-content/{image,audio,video,document}-understanding
+// Audio, video and document types Gemini models accept. Images go to pi's own image handling.
+// Everything else stays plain text for pi's read tool.
+// https://ai.google.dev/gemini-api/docs/generate-content/{audio,video,document}-understanding
 const MIME_BY_EXTENSION: Record<string, string> = {
-	png: "image/png",
-	jpg: "image/jpeg",
-	jpeg: "image/jpeg",
-	webp: "image/webp",
-	gif: "image/gif",
-	heic: "image/heic",
-	heif: "image/heif",
 	wav: "audio/wav",
 	mp3: "audio/mpeg",
 	aac: "audio/aac",
@@ -56,21 +53,38 @@ async function isAttachable(path: string) {
 	}
 }
 
+async function readImage(path: string): Promise<ImageContent | undefined> {
+	try {
+		const mimeType = await detectSupportedImageMimeTypeFromFile(path);
+		if (!mimeType) return undefined;
+		return { type: "image", data: (await readFile(path)).toString("base64"), mimeType };
+	} catch {
+		return undefined;
+	}
+}
+
 export async function attachLocalMedia(text: string, cwd: string) {
 	let result = "";
 	let last = 0;
+	const images: ImageContent[] = [];
 	for (const match of text.matchAll(AT_PATH_RE)) {
 		const quoted = match[1];
 		const trailing = quoted ? "" : (match[2].match(TRAILING_PUNCTUATION_RE)?.[0] ?? "");
 		const mention = quoted ?? match[2].slice(0, match[2].length - trailing.length);
-		const mediaType = mediaTypeFromExtension(mention);
-		if (!mediaType) continue;
 		const path = resolve(cwd, mention);
 		if (!(await isAttachable(path))) continue;
+		const image = await readImage(path);
+		if (image) {
+			images.push(image);
+			continue;
+		}
+		const mediaType = mediaTypeFromExtension(mention);
+		if (!mediaType) continue;
 		result += text.slice(last, match.index + match[0].indexOf("@")) + makeMarker(path, mediaType) + trailing;
 		last = match.index + match[0].length;
 	}
-	return last === 0 ? undefined : result + text.slice(last);
+	if (last === 0 && images.length === 0) return undefined;
+	return { text: result + text.slice(last), images };
 }
 
 type MediaSegment = { type: "text"; text: string } | { type: "media"; path: string; mediaType: string };
