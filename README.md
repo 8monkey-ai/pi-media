@@ -1,6 +1,6 @@
 # pi-media
 
-Attach local images, audio, video and PDFs to your messages. Type a path, drag a file into the terminal, or paste with Ctrl+V. If the provider API accepts the file type, the model gets the file as an attachment. If not, the model gets the path as text.
+pi-media is a [pi](https://github.com/earendil-works/pi) extension that attaches local images, audio, video and PDF files to your message when you write their paths in it. The model can also read audio, video and PDF files with the `read` tool.
 
 ## Install
 
@@ -16,138 +16,140 @@ what is wrong with this recording? ~/Downloads/debug-session.mp3
 compare @"Q3 report.pdf" with ./q4-report.pdf
 ```
 
+Type a path, drag a file into the terminal, or paste with Ctrl+V (Alt+V on Windows and WSL). If the API of the model can take the file type, the model gets the file. If not, the model gets only your message with the path in it.
+
+When you paste an image, pi writes it to the file `pi-clipboard-<id>.<ext>` in the system temporary directory. Pi then puts the path of that file in your message, and pi-media attaches the file.
+
+### Path forms
+
 pi-media finds these paths in your message:
 
-- `@` mentions: `@screen.png` and `@"Q3 report.pdf"`. Pi's `@` autocomplete writes them for you.
+- `@` mentions, for example `@screen.png`, `@docs/notes.pdf` and `@"Q3 report.pdf"`. When you type `@`, pi lets you search for a file and writes the mention for you.
 - Paths that start with `/`, `~/`, `./` or `../`.
 - `file://` URIs, for example `file:///Users/me/My%20File.pdf`.
 
-A path must start at the start of the message, after a space or a line break, or after `(`, `[` or `{`. A `/` in a word or in a URL, for example `https://example.com/a.png`, does not start a path.
+A path starts at the start of the message, after a space, a tab or a line break, or after `(`, `[` or `{`. A `/` in a word or in a URL, for example `https://example.com/a.png`, does not start a path. A relative path such as `docs/notes.pdf` must start with `./` or `@`.
 
-Paths can have spaces in them when you write them in one of these forms:
+A message can have many paths. pi-media attaches all of them.
 
-- With backslashes: `/Users/me/My\ File.png`. Terminal.app, iTerm2, Ghostty and WezTerm write dragged files like this.
-- In single quotes: `'/Users/me/My File.png'`. Kitty, VS Code and GNOME Terminal write dragged files like this.
+### Paths with spaces
+
+Write a path with spaces in one of these forms:
+
+- With a backslash before each space: `/Users/me/My\ File.png`.
+- In single quotes: `'/Users/me/My File.png'`.
 - In double quotes: `"/Users/me/My File.png"`.
-- Alone on a line: `/Users/me/My File.png`. When you paste copied files with Ctrl+V, pi writes each path on its own line like this.
+- Alone on a line: `/Users/me/My File.png`. When you paste copied files with Ctrl+V on macOS, pi writes each path on a line of its own.
 
-A message can have many paths, with spaces or line breaks between them. When you drag many files, pi-media attaches all of them.
+Terminals usually write a dragged file in one of the first three forms.
 
-When you paste an image with Ctrl+V, pi writes it to a temporary file such as `/tmp/pi-clipboard-<id>.png` and puts that path in your message. pi-media attaches that file.
+### How a path finds the file
 
-pi-media finds files with the same rules as pi's `read` tool:
+pi-media uses the same rules as pi's `read` tool:
 
-- Relative paths start from the working directory of the session.
+- A relative path starts from the working directory of the session.
 - `~` is your home directory.
-- On macOS, a screenshot name such as `Screenshot 2024-01-01 at 10.00.00 AM.png` has a narrow no-break space before `AM`. A normal space in the path also finds the file.
-- A name with accents or a curly apostrophe (`’`) also matches when you type it with a straight apostrophe (`'`) or in a different Unicode form.
+- On macOS, a screenshot name such as `Screenshot 2024-01-01 at 10.00.00 AM.png` has a narrow no-break space before `AM` or `PM`. A normal space in the path also finds the file.
+- A file name in decomposed Unicode form (NFD) matches when you type it in composed form.
+- A file name with a curly apostrophe (`’`) matches when you type a straight apostrophe (`'`).
+- pi-media reads other Unicode space characters in a path as normal spaces.
 
-## Supported files
+At the end of a path without quotes, pi-media ignores the characters `)`, `]`, `,`, `.`, `;`, `:`, `!` and `?`. For example, in `(see ./a.pdf).` pi-media finds `./a.pdf`. This rule does not apply to a path with spaces that is alone on its line.
 
-pi-media finds the type of a file from its first bytes. The file extension has no effect.
+## What gets attached
 
-| Kind | Types | Type check |
-|---|---|---|
-| Image | PNG, JPEG, GIF, WebP, BMP | Pi's own image check |
-| Audio | All `audio/*` types | The [`file-type`](https://github.com/sindresorhus/file-type) package |
-| Video | All `video/*` types | The `file-type` package |
-| Document | PDF | The `file-type` package |
+pi-media attaches a file when all of these conditions are true:
 
-## Your message
+- The path points to a file, not to a directory.
+- The file is not empty.
+- The file is not larger than `maxAttachmentBytes`, 20 MiB by default (see [Settings](#settings)).
+- The file has one of these types:
 
-Your message text stays as you typed it, with the path in it, for all kinds of files.
+| Kind | Types |
+|---|---|
+| Image | PNG, JPEG, GIF, WebP, BMP |
+| Audio | All `audio/*` types |
+| Video | All `video/*` types |
+| Document | PDF |
 
-## Images
+If a condition is false, the path stays as text and no file attaches.
 
-pi-media gives images to pi, and pi handles them the same way as all other images:
+- pi-media finds the type of a file from its content, not from its file name extension. For images, it uses pi's own image check. For other files, it uses the [`file-type`](https://github.com/sindresorhus/file-type) package.
+- Animated PNG, HEIC and HEIF files stay as text.
+- Your message text stays as you typed it, with the paths in it.
+- pi-media gives images to pi. Pi handles them as it handles other images in a message. For example, the settings `images.autoResize` and `images.blockImages` apply, and a model without image input gets a text note instead of the image.
+- pi-media reads an audio, video or PDF file when you send the message. It stores the bytes in the session as base64 text, which is about 1.33 times the file size. It stores the files that the `read` tool reads in the same way.
+- Later turns and resumed sessions use the stored bytes. If you change or delete the file, the model still gets the file as it was when pi-media read it.
+- A file that you name two times in one message attaches one time.
 
-- Pi resizes large images.
-- Pi stores the images in the session with your message.
-- If the model does not accept images, pi sends a placeholder text.
-- The `blockImages` setting applies.
+## Providers
 
-pi-media does not attach HEIC and HEIF files, because pi does not detect them. A file with an image extension but other content stays as text.
+On each request, pi-media puts the stored audio, video and PDF files in the form that the API of the current model takes. Images go through pi, as [What gets attached](#what-gets-attached) states.
 
-## Audio, video and PDFs
+| API | In your message | In a read tool result | Notes |
+|---|---|---|---|
+| Anthropic Messages (`anthropic-messages`) | PDF | PDF | The [Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/pdf-support) give a limit of 32 MB and 600 PDF pages for each request, or 100 pages when the context window is smaller than 1M tokens. |
+| Amazon Bedrock Converse (`bedrock-converse-stream`) | PDF; audio: MP3, WAV, FLAC, AAC, Ogg, Opus, MP4 audio, M4A; video: MP4, MOV, WebM, MKV, FLV, MPEG, 3GP | PDF; the same video types | A tool result cannot hold audio. |
+| Gemini API (`google-generative-ai`) and Vertex AI (`google-vertex`) | All audio, video, PDF | All audio, video, PDF | |
+| OpenAI-compatible Chat Completions (`openai-completions`) | PDF; audio: WAV, MP3 | PDF; audio: WAV, MP3 | Other audio and all video stay as path text. A provider can reject the parts that it gets. |
+| OpenRouter (`openai-completions`, provider `openrouter`) | PDF; audio: WAV, MP3, AIFF, AAC, Ogg, FLAC, M4A; video: MP4, MPEG, WebM | The same as in your message | Other video, for example MOV, stays as path text. A model can reject a format. |
+| OpenAI Responses, Azure OpenAI Responses and OpenAI Codex (`openai-responses`, `azure-openai-responses`, `openai-codex-responses`) | PDF | PDF | The [OpenAI docs](https://developers.openai.com/api/docs/guides/file-inputs) give a limit of 50 MB for all files in one request. |
+| Virtual models (`pi-virtual`) | None | None | pi-media sees only the API `pi-virtual`, not the API of the model that answers. |
+| All other APIs | None | None | |
 
-pi-media reads the file when you send the message and stores its bytes in the session, next to your message. Later turns and resumed sessions send the stored bytes. If the file changes or you delete it, the model still gets the file as it was when you sent the message.
+A type that is not in the row of the API stays as path text in your message. In a read tool result, the model gets the note in [The read tool](#the-read-tool) instead.
 
-On each request, pi-media looks at the API of the model and formats the stored files for that API.
+A provider error, for example for a request that is too large, shows in pi unchanged.
 
-| API | Kinds | Part in the request |
-|---|---|---|
-| OpenAI-compatible Chat Completions (`openai-completions`) | PDF, wav and mp3 audio | `{"type":"file","file":{"filename":"<name>","file_data":"data:application/pdf;base64,<base64>"}}` for PDFs, `{"type":"input_audio","input_audio":{"data":"<base64>","format":"wav"}}` for audio (`wav` or `mp3`) |
-| Gemini API (`google-generative-ai`) and Vertex AI (`google-vertex`) | Audio, video, PDF | `{"inlineData":{"mimeType":"<mime>","data":"<base64>"}}` |
-| Anthropic Messages (`anthropic-messages`) | PDF | `{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"<base64>"}}` |
-| Amazon Bedrock Converse (`bedrock-converse-stream`) | PDF, video, audio | `document` (format `pdf`), `video` and `audio` blocks with the raw bytes |
-| OpenAI Responses, Azure OpenAI Responses and OpenAI Codex (`openai-responses`, `azure-openai-responses`, `openai-codex-responses`) | PDF | `{"type":"input_file","filename":"<name>","file_data":"data:application/pdf;base64,<base64>"}` |
-| OpenRouter (`openai-completions`, provider `openrouter`) | PDF; audio (wav, mp3, aiff, aac, ogg, flac, m4a); video (mp4, mpeg, webm) | PDF: the Chat Completions `file` part; audio: `{"type":"input_audio","input_audio":{"data":"<base64>","format":"<format>"}}`; video: `{"type":"video_url","video_url":{"url":"data:<mime>;base64,<base64>"}}` |
-| All other APIs | None | The path stays as text |
+Bedrock needs a name for each document. pi-media makes the name from the file name:
 
-For all other APIs, for example Mistral, the model gets your message with the path as text, and no file.
-
-Chat Completions gets video, and audio other than wav and mp3, as path text. A provider that does not accept these parts returns an error. The error shows in the UI unchanged.
-
-Virtual models use the API `pi-virtual`, so pi-media cannot find the API of the model that answers. A virtual model gets the path as text, and no file. This is a known limit.
-
-The Gemini API limits a request with inline audio or video to 20 MB in total. If a request is too large, the provider error shows in the UI unchanged.
-
-The Anthropic Messages API has no block for audio or video, so the model gets the path of these files as text. A request can have at most 32 MB and 600 PDF pages.
-
-Bedrock gets a document name made from the file name, with only letters, digits, single spaces, hyphens, parentheses and square brackets. Video and audio types that Converse has no format for stay as text.
-
-The Responses API gets audio and video as path text. OpenAI accepts at most 50 MB of files in one request.
-
-OpenRouter models accept only some of these formats. If a model does not accept a format, the OpenRouter error shows in the UI unchanged. MOV video stays as text.
+- It removes accents.
+- It changes each run of characters other than ASCII letters, digits, hyphens, parentheses and square brackets to one space.
+- It keeps at most 200 characters.
+- It uses `document` if no characters are left.
+- It adds ` (2)`, ` (3)` and so on to a name that an earlier document in the request has.
 
 ## The read tool
 
-pi-media replaces pi's `read` tool. With it, the model can read audio, video and PDF files, and also text files and images.
+pi-media registers its own `read` tool in place of pi's `read` tool. The tool description tells the model that the tool also reads audio, video and PDF files. For all other files, images too, the tool runs pi's `read` tool, and the result is the same as without pi-media.
 
-- The tool finds the file with the same path rules and the same size limit, `maxAttachmentBytes`, as for paths in your message. It gives a larger file to pi's own `read` tool. It finds the file type from the first bytes of the file.
-- For an audio, video or PDF file, the tool result has a short note, for example `Read PDF file [application/pdf]: /Users/me/report.pdf`. pi-media stores the bytes of the file in the session with the tool result. Later turns and resumed sessions send the stored bytes.
-- pi-media gives all other files, images too, to pi's own `read` tool. The result is the same as without pi-media.
+For an audio, video or PDF file, the tool result is a short note, and the model gets the file with it. For example:
 
-On each request, pi-media looks at the API of the model. If the API accepts the file in a tool result, pi-media puts the file there.
+```
+Read PDF file [application/pdf]: /Users/me/report.pdf
+```
 
-| API | Kinds in a tool result | Where the file goes |
-|---|---|---|
-| OpenAI-compatible Chat Completions (`openai-completions`) | PDF, wav and mp3 audio | A user message after the tool results |
-| OpenRouter (`openai-completions`, provider `openrouter`) | The same kinds as in your message | A user message after the tool results |
-| Gemini API (`google-generative-ai`) and Vertex AI (`google-vertex`) | Audio, video, PDF | Gemini 3 and later: PDF in `functionResponse.parts`, audio and video in a user turn after the tool results. Older models: all files in a user turn after the tool results |
-| Anthropic Messages (`anthropic-messages`) | PDF | A `document` block in the `tool_result` content, after the note |
-| Amazon Bedrock Converse (`bedrock-converse-stream`) | PDF, video | A `document` or `video` block in the `toolResult` content |
-| OpenAI Responses, Azure OpenAI Responses and OpenAI Codex (`openai-responses`, `azure-openai-responses`, `openai-codex-responses`) | PDF | An `input_file` part in the `function_call_output` `output`, after the note |
-| All other APIs | None | |
+If the file is larger than `maxAttachmentBytes`, the model gets this note and no file:
 
-Chat Completions tool messages take only text. pi-media puts the file in the user message that pi adds for tool result images, or adds one user message with the text `Attached file(s) from tool result:` after the tool results. Gemini gets a user turn that starts with `Tool result file:`.
+```
+PDF file [application/pdf] is larger than the pi-media limit maxAttachmentBytes (20971520 bytes): /Users/me/report.pdf
+```
 
-If the API does not accept the file in a tool result, the model gets this note after the tool result, and no file:
+If the API of the model cannot take the file in a tool result (see [Providers](#providers)), the model gets this note after the tool result, and no file:
 
 ```
 [The API of the current model cannot take this file type. The file content is not in this request.]
 ```
 
-If another extension also replaces `read`, it conflicts with pi-media. Pi uses the `read` tool of the extension that loads first.
+Each API gets the file of a tool result in a different place:
 
-## Limits
+- Anthropic Messages: a `document` block in the `tool_result` content, after the note.
+- Bedrock Converse: a `document` or `video` block in the `toolResult` content.
+- OpenAI Responses: an `input_file` part in the `output` of the tool output item, after the note.
+- Gemini and Vertex AI: a PDF goes in `functionResponse.parts`. This applies to Gemini 3 and later, and to model ids that do not start with `gemini-<version>` or `gemini-live-<version>`. For older Gemini models, for example `gemini-2.5-flash`, a PDF goes in a user turn after the tool results. Audio and video always go in that user turn. That turn starts with the text `Tool result file:`. If pi has added a `Tool result image:` turn there, pi-media adds the text and the files to that turn.
+- Chat Completions and OpenRouter: tool messages take only text, so the files go in a user message after the tool messages. If pi has added a user message for tool result images there, pi-media adds the files to it. If not, pi-media adds a user message that starts with the text `Attached file(s) from tool result:`. For a model with `compat.requiresAssistantAfterToolResult`, an assistant message with the text `I have processed the tool results.` comes before that user message.
 
-- A path stays as you typed it if it does not point to an existing, non-empty file of a supported type. Directories, missing files, empty files and other file types stay as text.
-- pi-media does not attach files larger than `maxAttachmentBytes` (20 MB by default, see [Settings](#settings)). The path stays as text.
-- A path without quotes or backslashes ends at the first space if its line has other text. In `see /Users/me/My File.png`, pi-media looks for `/Users/me/My`, and the text stays as you typed it.
-- pi-media finds the stored file of a message by its text. Audio, video and PDFs do not attach to a message that starts with a skill (`/skill:name`) or a prompt template (`/name`), because pi replaces the text of these messages.
-- A message gets the files of one stored entry at most. If you clear the message queue, or edit a message in the session tree, the stored files of that message stay unused. A later message with the same text that attaches no files of its own gets these files.
-- Errors from the provider, for example an unsupported media kind or a request that is too large, show in the UI unchanged.
+If another extension also registers a `read` tool, pi uses the `read` tool of the extension that loads first.
 
 ## Settings
 
-pi-media reads its settings from the file `pi-media.json` in the pi agent directory. This is `~/.pi/agent/pi-media.json`, or `$PI_CODING_AGENT_DIR/pi-media.json` if you set `PI_CODING_AGENT_DIR`. Pi has no settings section for extensions, so pi-media uses a file of its own. If the file or a setting is missing, pi-media uses the default.
+pi-media reads its settings from the file `pi-media.json` in the pi agent directory. This file is `~/.pi/agent/pi-media.json`, or `$PI_CODING_AGENT_DIR/pi-media.json` if you set `PI_CODING_AGENT_DIR`. If the file or a setting is missing, pi-media uses the default.
 
 | Setting | Default | Effect |
 |---|---|---|
-| `maxAttachmentBytes` | `20971520` (20 MB) | The size of the largest file that pi-media attaches, in bytes. A larger file stays as text in your message, and the `read` tool gives it to pi's own `read` tool. pi-media keeps each attached file in memory, so a larger value uses more memory. |
+| `maxAttachmentBytes` | `20971520` (20 MiB) | The size in bytes of the largest file that pi-media attaches, from your message or from the `read` tool. A larger file in your message stays as path text. pi-media holds each attached file in memory as base64 text, so a larger value can use more memory. |
 
-Example, for a limit of 50 MB:
+Example, for a limit of 50 MiB:
 
 ```json
 {
@@ -155,15 +157,31 @@ Example, for a limit of 50 MB:
 }
 ```
 
-pi-media reads the file when pi loads extensions. After you change the file, run `/reload` or start pi again. pi-media ignores keys that it does not know. If the file is not valid JSON, or `maxAttachmentBytes` is not a positive integer, pi-media does not load, and pi shows an error with the path of the file.
+- pi-media reads the file when pi loads extensions. After you change the file, run `/reload` or start pi again.
+- pi-media ignores keys that it does not know.
+- pi-media does not load, and pi shows an error with the path of the file, in these cases:
+  - The file is not valid JSON.
+  - The JSON value is not an object, for example an array or a number.
+  - `maxAttachmentBytes` is not a positive integer.
+  - pi-media cannot read a file that exists.
+
+## Limits
+
+- A path without quotes or backslashes ends at the first space if its line has other text. In `see /Users/me/My File.png`, pi-media looks for `/Users/me/My`, and no file attaches.
+- Audio, video and PDF files do not attach to a message that pi expands from a skill (`/skill:name`) or a prompt template (`/name`). Images attach.
+- pi-media stores the files of a message in a session entry of its own, and finds that entry by the message text. Each message gets the files of one entry at most. If a message does not reach the session, for example when you clear the message queue or edit a message in the session tree, its entry stays unused. A later message with the same text that attaches no files of its own then gets the files of that entry.
+- pi-media marks the place of a file in a request with text of the form `[[pi-media:<id>:<number>]]`. If your message or a tool result ends with lines that hold only text of this form, pi-media can remove these lines from the request.
 
 ## Requirements
 
-Node 22 or later, or Bun. pi-media has no build step.
+- pi
+- Node 22.19 or later
 
 ## Development
 
-Run all checks before you commit. This command runs the Biome format and lint checks, the type check, and the tests:
+pi-media has no build step. Pi loads the TypeScript files in `src/` directly.
+
+To run the Biome format and lint checks, the type check and the tests, run:
 
 ```bash
 npm run check
