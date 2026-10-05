@@ -1,7 +1,8 @@
 import type { ContextEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Adapter } from "./adapters/adapter.ts";
+import { mediaForContext } from "./link.ts";
 import { makeMarker } from "./marker.ts";
-import { mediaForContext, toolResultAttachment } from "./media-entry.ts";
+import { toolResultAttachment } from "./media-entry.ts";
 
 type Messages = ContextEvent["messages"];
 type Carries = Adapter["carries"];
@@ -12,11 +13,10 @@ function textBlock(text: string) {
 	return { type: "text" as const, text };
 }
 
-// Adds one marker block per attachment that the adapter carries to each linked user message.
 function markUserMessages(messages: Messages, branch: SessionEntry[], carries: Carries): Messages {
 	const markers = mediaForContext(messages, branch).map((entries) =>
 		entries.flatMap((entry) =>
-			(entry.data?.attachments ?? []).flatMap((attachment, index) =>
+			entry.data.attachments.flatMap((attachment, index) =>
 				carries(attachment.mimeType, "user") ? [textBlock(makeMarker(entry.id, index))] : [],
 			),
 		),

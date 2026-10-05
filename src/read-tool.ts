@@ -10,10 +10,9 @@ function kindName(mimeType: string) {
 	return mimeType === "application/pdf" ? "PDF" : mimeType.slice(0, mimeType.indexOf("/"));
 }
 
-// Pi's read tool, which also returns audio, video and PDF files. It keeps their bytes in `details`, which pi stores
-// in the session as JSON, so the bytes follow the branch. All other files, images too, go to pi's read tool.
-// `autoResizeImages` runs on each read, so a changed setting applies to the next read. For a media file larger than
-// `maxBytes` the tool returns only a note, because pi's read tool would return the bytes as text.
+// The bytes of an audio, video or PDF file go in `details`, which pi stores in the session as JSON,
+// so the bytes follow the branch.
+// `autoResizeImages` is a function so that a changed pi setting applies on the next read.
 export function createMediaReadTool(
 	autoResizeImages: () => boolean | undefined,
 	maxBytes: number,
@@ -30,6 +29,7 @@ export function createMediaReadTool(
 				return createReadToolDefinition(ctx.cwd, { autoResizeImages: autoResizeImages() }).execute(...args);
 			}
 			const kind = `${kindName(file.mimeType)} file [${file.mimeType}]`;
+			// Pi's read tool would return the bytes of a large media file as text, so the model gets only this note.
 			if (file.size > maxBytes) {
 				const text = `${kind} is larger than the pi-media limit maxAttachmentBytes (${maxBytes} bytes): ${file.path}`;
 				return { content: [{ type: "text", text }], details: undefined };

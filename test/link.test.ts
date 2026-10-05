@@ -117,7 +117,7 @@ test("links a message to which pi adds image hints", async () => {
 	});
 });
 
-test("does not link a message that a skill or prompt template expands", async () => {
+test("documents a known limit: does not link a message that a skill or prompt template expands", async () => {
 	const { session, requests, settle } = await start();
 	await settle(session.prompt("/skill:greet @a.mp3"));
 	await settle(session.prompt("/review @a.mp3"));

@@ -28,7 +28,6 @@ async function detectType(path: string) {
 	return mimeType && isMediaType(mimeType) ? { image: false, mimeType } : undefined;
 }
 
-// Finds the file that a path names if it is an existing, non-empty file of an image or media type.
 // The type detectors read only the start of the file, so a large file costs no more than a small one.
 export async function findMediaFile(mention: string, cwd: string) {
 	const path = await resolveExistingPath(mention, cwd);
@@ -42,18 +41,6 @@ export async function readAttachment(path: string, mimeType: string): Promise<At
 	return { path, mimeType, data: (await readFile(path)).toString("base64") };
 }
 
-type MediaFile = NonNullable<Awaited<ReturnType<typeof findMediaFile>>>;
-
-async function attach(file: MediaFile): Promise<ImageContent | Attachment | undefined> {
-	try {
-		const attachment = await readAttachment(file.path, file.mimeType);
-		return file.image ? { type: "image", data: attachment.data, mimeType: attachment.mimeType } : attachment;
-	} catch {
-		return undefined;
-	}
-}
-
-// Attaches each file once, even when the text names it more than one time.
 export async function findLocalMedia(text: string, cwd: string, maxBytes: number) {
 	let attachedEnd = 0;
 	const attachedPaths = new Set<string>();
@@ -67,12 +54,12 @@ export async function findLocalMedia(text: string, cwd: string, maxBytes: number
 			attachedEnd = end;
 			continue;
 		}
-		const found = await attach(file);
-		if (!found) continue;
+		const attachment = await readAttachment(file.path, file.mimeType).catch(() => undefined);
+		if (!attachment) continue;
 		attachedEnd = end;
 		attachedPaths.add(file.path);
-		if ("type" in found) images.push(found);
-		else attachments.push(found);
+		if (file.image) images.push({ type: "image", data: attachment.data, mimeType: attachment.mimeType });
+		else attachments.push(attachment);
 	}
 	return { images, attachments };
 }

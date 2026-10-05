@@ -5,6 +5,7 @@ import { fauxAssistantMessage, fauxToolCall, type Message } from "@earendil-work
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { registerAdapter } from "../src/adapters/registry.ts";
 import extension from "../src/index.ts";
+import { takeMarkers } from "../src/marker.ts";
 import { startSession } from "./session-harness.ts";
 
 // The model reads report.pdf with the read tool, then answers.
@@ -23,9 +24,10 @@ registerAdapter({
 	api: "test-tool-result-api",
 	carries: () => true,
 	rewrite: (payload, attachment) => ({
-		attachments: [...JSON.stringify(payload).matchAll(/\[\[pi-media:([^:\]]+):(\d+)\]\]/g)].map((match) =>
-			attachment(match[1], Number(match[2])),
-		),
+		attachments: (payload as ReturnType<typeof toolResultPayload>).toolResults
+			.flat()
+			.flatMap((part) => (part.type === "text" ? (takeMarkers(part.text, false)?.markers ?? []) : []))
+			.map(({ entryId, index }) => attachment(entryId, index)),
 	}),
 });
 

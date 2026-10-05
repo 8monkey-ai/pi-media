@@ -31,7 +31,7 @@
     "typecheck": "tsc --noEmit",
     "format": "biome format --write .",
     "lint": "biome lint .",
-    "check": "biome check . && tsc --noEmit && node --test"
+    "check": "biome check . && npm run typecheck && npm test"
   },
   "dependencies": {
     "file-type": "^22.1.1"

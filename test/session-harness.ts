@@ -34,13 +34,6 @@ type SessionOptions = {
 	payload?: (messages: Message[]) => unknown;
 };
 
-// Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
-// A model call waits until `settle` runs, so a test can queue input while pi streams.
-// `files` go into the working directory, which is also the agent directory. `sessionManager` defaults to an in-memory one.
-// `api` is the API of the model. It defaults to Chat Completions, the shape of the default payload.
-// `tools` names the active tools; there are none by default.
-// `reply` makes the answer of the model from the request messages, for example a tool call. It defaults to "ok".
-// `payload` makes the provider payload from the request messages. It defaults to the user messages in Chat Completions shape.
 // Extensions find their config through `getAgentDir()`, so it names the session directory while they load.
 async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: string) {
 	const previous = process.env.PI_CODING_AGENT_DIR;
@@ -53,6 +46,13 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 	}
 }
 
+// Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
+// A model call waits until `settle` runs, so a test can queue input while pi streams.
+// `files` go into the working directory, which is also the agent directory. `sessionManager` defaults to an in-memory one.
+// `api` is the API of the model. It defaults to Chat Completions, the shape of the default payload.
+// `tools` names the active tools; there are none by default.
+// `reply` makes the answer of the model from the request messages, for example a tool call. It defaults to "ok".
+// `payload` makes the provider payload from the request messages. It defaults to the user messages in Chat Completions shape.
 export async function startSession(
 	extensions: ExtensionFactory[],
 	{
