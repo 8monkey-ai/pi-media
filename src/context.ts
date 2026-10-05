@@ -28,19 +28,34 @@ function markUserMessages(messages: Messages, branch: SessionEntry[], carries: C
 	});
 }
 
+// Context messages have no entry ids, and some servers give the same tool call id to more than one call,
+// so the match walks the tool results of both lists in order.
+function toolResultEntryIds(messages: Messages, branch: SessionEntry[]) {
+	const entries = branch.flatMap((entry) =>
+		entry.type === "message" && entry.message.role === "toolResult" ? [{ id: entry.id, message: entry.message }] : [],
+	);
+	let next = 0;
+	return messages.map((message) => {
+		if (message.role !== "toolResult") return undefined;
+		const index = entries.findIndex(
+			(entry, position) =>
+				position >= next && entry.message.timestamp === message.timestamp && entry.message.toolCallId === message.toolCallId,
+		);
+		if (index === -1) return undefined;
+		next = index + 1;
+		return entries[index].id;
+	});
+}
+
 // Adds a marker block to each tool result whose attachment the adapter carries, and a note to the other tool results
 // with an attachment, so the model knows that it did not get the file.
 function markToolResults(messages: Messages, branch: SessionEntry[], carries: Carries): Messages {
-	const entryIds = new Map(
-		branch.flatMap((entry) =>
-			entry.type === "message" && entry.message.role === "toolResult" ? [[entry.message.toolCallId, entry.id]] : [],
-		),
-	);
-	return messages.map((message) => {
+	const entryIds = toolResultEntryIds(messages, branch);
+	return messages.map((message, position) => {
 		if (message.role !== "toolResult") return message;
 		const attachment = toolResultAttachment(message);
 		if (!attachment) return message;
-		const entryId = entryIds.get(message.toolCallId);
+		const entryId = entryIds[position];
 		const placed = entryId !== undefined && carries(attachment.mimeType, "toolResult");
 		return { ...message, content: [...message.content, textBlock(placed ? makeMarker(entryId, 0) : NOT_IN_REQUEST)] };
 	});

@@ -74,3 +74,11 @@ test("ignores an email-like mention that is not a path", async () => {
 	const dir = await fixtureDir({});
 	assert.deepEqual(await findLocalMedia("mail me at someone@example.com", dir, 20971520), NOTHING);
 });
+
+test("attaches a file that the message names more than one time once", async () => {
+	const dir = await fixtureDir({ "a.pdf": "%PDF-1.4", "shot.png": PNG_BYTES });
+	assert.deepEqual(await findLocalMedia("@a.pdf and @a.pdf, @shot.png and @./shot.png", dir, 20971520), {
+		images: [PNG_IMAGE],
+		attachments: [{ path: join(dir, "a.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
+	});
+});

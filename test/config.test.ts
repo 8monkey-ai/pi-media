@@ -92,6 +92,14 @@ test("applies maxAttachmentBytes to paths in the message and to the read tool", 
 	);
 	assert.deepEqual(
 		branch.flatMap((entry) => (entry.type === "message" && entry.message.role === "toolResult" ? [entry.message.content] : [])),
-		[[{ type: "text", text: "%PDF-1.4 " }], [{ type: "text", text: `Read PDF file [application/pdf]: ${join(dir, "max.pdf")}` }]],
+		[
+			[
+				{
+					type: "text",
+					text: `PDF file [application/pdf] is larger than the pi-media limit maxAttachmentBytes (8 bytes): ${join(dir, "big.pdf")}`,
+				},
+			],
+			[{ type: "text", text: `Read PDF file [application/pdf]: ${join(dir, "max.pdf")}` }],
+		],
 	);
 });

@@ -7,12 +7,12 @@ import { resolveExistingPath } from "./resolve-path.ts";
 
 type ImageContent = NonNullable<InputEvent["images"]>[number];
 
-async function isAttachable(path: string, maxBytes: number) {
+async function fileSize(path: string) {
 	try {
 		const stats = await stat(path);
-		return stats.isFile() && stats.size > 0 && stats.size <= maxBytes;
+		return stats.isFile() ? stats.size : 0;
 	} catch {
-		return false;
+		return 0;
 	}
 }
 
@@ -28,21 +28,23 @@ async function detectType(path: string) {
 	return mimeType && isMediaType(mimeType) ? { image: false, mimeType } : undefined;
 }
 
-// Finds the file that a path names if pi-media attaches it: an existing file of at most `maxBytes`, of an image or media type.
-export async function findMediaFile(mention: string, cwd: string, maxBytes: number) {
+// Finds the file that a path names if it is an existing, non-empty file of an image or media type.
+// The type detectors read only the start of the file, so a large file costs no more than a small one.
+export async function findMediaFile(mention: string, cwd: string) {
 	const path = await resolveExistingPath(mention, cwd);
-	if (!path || !(await isAttachable(path, maxBytes))) return undefined;
+	const size = path ? await fileSize(path) : 0;
+	if (!path || size === 0) return undefined;
 	const type = await detectType(path).catch(() => undefined);
-	return type && { path, ...type };
+	return type && { path, size, ...type };
 }
 
 export async function readAttachment(path: string, mimeType: string): Promise<Attachment> {
 	return { path, mimeType, data: (await readFile(path)).toString("base64") };
 }
 
-async function attach(mention: string, cwd: string, maxBytes: number): Promise<ImageContent | Attachment | undefined> {
-	const file = await findMediaFile(mention, cwd, maxBytes);
-	if (!file) return undefined;
+type MediaFile = NonNullable<Awaited<ReturnType<typeof findMediaFile>>>;
+
+async function attach(file: MediaFile): Promise<ImageContent | Attachment | undefined> {
 	try {
 		const attachment = await readAttachment(file.path, file.mimeType);
 		return file.image ? { type: "image", data: attachment.data, mimeType: attachment.mimeType } : attachment;
@@ -51,15 +53,24 @@ async function attach(mention: string, cwd: string, maxBytes: number): Promise<I
 	}
 }
 
+// Attaches each file once, even when the text names it more than one time.
 export async function findLocalMedia(text: string, cwd: string, maxBytes: number) {
 	let attachedEnd = 0;
+	const attachedPaths = new Set<string>();
 	const images: ImageContent[] = [];
 	const attachments: Attachment[] = [];
 	for (const { start, end, path } of findPathCandidates(text)) {
 		if (start < attachedEnd) continue;
-		const found = await attach(path, cwd, maxBytes);
+		const file = await findMediaFile(path, cwd);
+		if (!file || file.size > maxBytes) continue;
+		if (attachedPaths.has(file.path)) {
+			attachedEnd = end;
+			continue;
+		}
+		const found = await attach(file);
 		if (!found) continue;
 		attachedEnd = end;
+		attachedPaths.add(file.path);
 		if ("type" in found) images.push(found);
 		else attachments.push(found);
 	}

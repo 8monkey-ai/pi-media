@@ -39,8 +39,10 @@ function firstText(content: unknown) {
 }
 
 // Pi adds image hints after a blank line when it resizes or converts an image in the same message.
-function belongsTo(entry: MediaEntry, text: string) {
-	return text === entry.data?.text || text.startsWith(`${entry.data?.text}\n\n`);
+// An entry with the exact text comes first, because the text of an entry can itself hold a blank line.
+function findEntryFor(pending: MediaEntry[], text: string) {
+	const exact = pending.findLastIndex((entry) => entry.data?.text === text);
+	return exact !== -1 ? exact : pending.findLastIndex((entry) => text.startsWith(`${entry.data?.text}\n\n`));
 }
 
 // Each user message on the branch takes the newest earlier pi-media entry with its text that no other message took.
@@ -58,7 +60,7 @@ function linkUserMessages(branch: SessionEntry[]) {
 		}
 		if (entry.type !== "message" || entry.message.role !== "user") continue;
 		const text = firstText(entry.message.content);
-		const index = text === undefined ? -1 : pending.findLastIndex((candidate) => belongsTo(candidate, text));
+		const index = text === undefined ? -1 : findEntryFor(pending, text);
 		users.push({ timestamp: entry.message.timestamp, entries: index === -1 ? [] : pending.splice(index, 1) });
 	}
 	return users;

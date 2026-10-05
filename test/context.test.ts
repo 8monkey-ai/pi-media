@@ -74,3 +74,61 @@ test("returns undefined when no user message has media", () => {
 	session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
 	assert.equal(markContext([{ role: "user", content: "hello", timestamp: 1 }], session.getBranch(), carriesAll), undefined);
 });
+
+function readResult(path: string, data: string, timestamp: number) {
+	return {
+		role: "toolResult" as const,
+		toolCallId: "call_0",
+		toolName: "read",
+		content: [{ type: "text" as const, text: `Read PDF file [application/pdf]: ${path}` }],
+		details: { path, mimeType: "application/pdf", data },
+		isError: false,
+		timestamp,
+	};
+}
+
+test("marks each of two tool results that share a tool call id with its own entry", () => {
+	const session = SessionManager.inMemory("/");
+	const first = readResult("/a.pdf", "JVBERi0xLjQ=", 1);
+	const second = readResult("/b.pdf", "JVBERi0xLjU=", 2);
+	const firstId = session.appendMessage(first);
+	const secondId = session.appendMessage(second);
+	assert.deepEqual(markContext([first, second], session.getBranch(), carriesAll), {
+		messages: [
+			{
+				...first,
+				content: [
+					{ type: "text", text: "Read PDF file [application/pdf]: /a.pdf" },
+					{ type: "text", text: `[[pi-media:${firstId}:0]]` },
+				],
+			},
+			{
+				...second,
+				content: [
+					{ type: "text", text: "Read PDF file [application/pdf]: /b.pdf" },
+					{ type: "text", text: `[[pi-media:${secondId}:0]]` },
+				],
+			},
+		],
+	});
+});
+
+test("links a message to the entry with its exact text before an entry whose text with image hints matches", () => {
+	const session = SessionManager.inMemory("/");
+	const attachments = [{ path: "/a.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" }];
+	const exactId = session.appendCustomEntry("pi-media", { text: "a\n\nb", attachments });
+	session.appendCustomEntry("pi-media", { text: "a", attachments });
+	session.appendMessage({ role: "user", content: "a\n\nb", timestamp: 1 });
+	assert.deepEqual(markContext([{ role: "user", content: "a\n\nb", timestamp: 1 }], session.getBranch(), carriesAll), {
+		messages: [
+			{
+				role: "user",
+				content: [
+					{ type: "text", text: "a\n\nb" },
+					{ type: "text", text: `[[pi-media:${exactId}:0]]` },
+				],
+				timestamp: 1,
+			},
+		],
+	});
+});

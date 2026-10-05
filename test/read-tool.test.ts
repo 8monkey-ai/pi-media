@@ -105,3 +105,36 @@ test("fails for a missing file with the error of pi's read tool", async () => {
 test("tells the model that the tool also reads audio, video and PDF files", () => {
 	assert.match(createMediaReadTool(() => undefined, 20971520).description, /Also reads audio, video and PDF files\./);
 });
+
+test("returns a note without the bytes for a media file larger than the size cap", async () => {
+	const dir = await fixtureDir({
+		"report.pdf": "%PDF-1.4 ",
+		"a.mp3": Buffer.concat([MP3_BYTES, Buffer.alloc(1)]),
+		"max.pdf": "%PDF-1.4",
+	});
+	const read = (path: string) =>
+		createMediaReadTool(() => undefined, 8).execute("call-1", { path }, undefined, undefined, context(dir));
+	assert.deepEqual(await read("report.pdf"), {
+		content: [
+			{
+				type: "text",
+				text: `PDF file [application/pdf] is larger than the pi-media limit maxAttachmentBytes (8 bytes): ${join(dir, "report.pdf")}`,
+			},
+		],
+		details: undefined,
+	});
+	assert.deepEqual(await read("a.mp3"), {
+		content: [
+			{
+				type: "text",
+				text: `audio file [audio/mpeg] is larger than the pi-media limit maxAttachmentBytes (8 bytes): ${join(dir, "a.mp3")}`,
+			},
+		],
+		details: undefined,
+	});
+	assert.deepEqual((await read("max.pdf")).details, {
+		path: join(dir, "max.pdf"),
+		mimeType: "application/pdf",
+		data: "JVBERi0xLjQ=",
+	});
+});
