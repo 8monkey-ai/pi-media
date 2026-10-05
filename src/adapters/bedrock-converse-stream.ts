@@ -1,5 +1,6 @@
 import { parse } from "node:path";
 import type { Attachment } from "../media-entry.ts";
+import type { FindAttachment } from "./adapter.ts";
 import { registerAdapter } from "./registry.ts";
 import { type PayloadShape, rewriteUserMessages } from "./user-messages.ts";
 
@@ -37,8 +38,9 @@ const audioFormats: Record<string, string> = {
 	"audio/x-m4a": "m4a",
 };
 
-function carries(mimeType: string) {
-	return mimeType === "application/pdf" || mimeType in videoFormats || mimeType in audioFormats;
+// A Converse tool result has document and video blocks, but no audio block.
+function carries(mimeType: string, place: "user" | "toolResult") {
+	return mimeType === "application/pdf" || mimeType in videoFormats || (place === "user" && mimeType in audioFormats);
 }
 
 // Converse allows only ASCII letters and digits, single spaces, hyphens, parentheses and square brackets, up to 200 characters.
@@ -77,7 +79,8 @@ function block({ path, mimeType, data }: Attachment, used: Set<string>) {
 
 type Message = Record<string, unknown>;
 
-const isDocument = (node: unknown) => !!node && typeof node === "object" && "document" in node;
+const isRecord = (value: unknown): value is Message => !!value && typeof value === "object";
+const isDocument = (node: unknown) => isRecord(node) && "document" in node;
 
 // Converse requires a text block in a message that has a document.
 function withText(message: Message) {
@@ -88,12 +91,38 @@ function withText(message: Message) {
 	return { ...message, content: content.toSpliced(first, 0, { text: content[first].document.name }) };
 }
 
-registerAdapter({
-	api: "bedrock-converse-stream",
-	carries,
-	rewrite: (payload, attachment) => {
-		const used = new Set<string>();
-		const rewritten = rewriteUserMessages(payload, shape, attachment, (found) => block(found, used));
-		return rewritten && { ...rewritten, messages: (rewritten.messages as Message[]).map(withText) };
-	},
-});
+// A Converse tool result keeps its text blocks in `content`, the same way a user message does.
+const toolResultShape: PayloadShape = { ...shape, messages: "toolResults", isUser: () => true };
+
+function rewriteToolResults(message: Message, attachment: FindAttachment, part: (found: Attachment) => unknown) {
+	const content = message.content;
+	if (message.role !== "user" || !Array.isArray(content)) return undefined;
+	const toolResults = content.map((node) => (isRecord(node) ? node.toolResult : undefined));
+	const rewritten = rewriteUserMessages({ toolResults }, toolResultShape, attachment, part);
+	if (!rewritten) return undefined;
+	const results = rewritten.toolResults as unknown[];
+	return {
+		...message,
+		content: content.map((node, index) =>
+			results[index] === toolResults[index] ? node : { ...node, toolResult: results[index] },
+		),
+	};
+}
+
+function rewrite(payload: unknown, attachment: FindAttachment) {
+	if (!isRecord(payload) || !Array.isArray(payload.messages)) return undefined;
+	const original: unknown[] = payload.messages;
+	const used = new Set<string>();
+	const inUser = (found: Attachment) => block(found, used);
+	const inToolResult = (found: Attachment) => (carries(found.mimeType, "toolResult") ? block(found, used) : undefined);
+	// One message at a time, so that documents get their names in message order.
+	const messages = original.map((message) => {
+		if (!isRecord(message)) return message;
+		const user = rewriteUserMessages({ messages: [message] }, shape, attachment, inUser);
+		if (user) return withText((user.messages as Message[])[0]);
+		return rewriteToolResults(message, attachment, inToolResult) ?? message;
+	});
+	return messages.some((message, index) => message !== original[index]) ? { ...payload, messages } : undefined;
+}
+
+registerAdapter({ api: "bedrock-converse-stream", carries, rewrite });

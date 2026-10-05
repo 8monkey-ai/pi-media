@@ -13,7 +13,21 @@ function isMediaEntry(entry: SessionEntry | undefined): entry is MediaEntry {
 	);
 }
 
+function isAttachment(value: unknown): value is Attachment {
+	const { path, mimeType, data } = (value ?? {}) as Record<string, unknown>;
+	return typeof path === "string" && typeof mimeType === "string" && typeof data === "string";
+}
+
+// pi-media's read tool keeps the attachment of a media file in the `details` of its tool result.
+export function toolResultAttachment(message: ContextEvent["messages"][number]) {
+	return message.role === "toolResult" && message.toolName === "read" && isAttachment(message.details)
+		? message.details
+		: undefined;
+}
+
+// A marker names a pi-media entry and the index of its attachment, or a tool result entry and index 0.
 export function findAttachment(entry: SessionEntry | undefined, index: number): Attachment | undefined {
+	if (entry?.type === "message") return index === 0 ? toolResultAttachment(entry.message) : undefined;
 	if (!isMediaEntry(entry) || !Array.isArray(entry.data?.attachments)) return undefined;
 	return entry.data.attachments[index];
 }

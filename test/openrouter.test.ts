@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type Model, normalizeContext } from "@earendil-works/pi-ai";
+import { type Message, type Model, normalizeContext } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import "../src/adapters/openai-completions.ts";
 import "../src/adapters/openrouter.ts";
@@ -38,7 +38,7 @@ const videoPart = (url: string) => ({ type: "video_url", video_url: { url } });
 type UserContent = string | ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[];
 
 // Builds the request body with pi-ai's own converter for an OpenRouter model and stops before any network call.
-async function piPayload(users: UserContent[], id = "google/gemini-2.5-flash") {
+async function piMessagesPayload(messages: Message[], id = "google/gemini-2.5-flash") {
 	const model: Model<"openai-completions"> = {
 		id,
 		name: id,
@@ -53,29 +53,31 @@ async function piPayload(users: UserContent[], id = "google/gemini-2.5-flash") {
 	};
 	const controller = new AbortController();
 	let payload: unknown;
-	const events = stream(
-		model,
-		normalizeContext({ messages: users.map((content, index) => ({ role: "user", content, timestamp: index })) }),
-		{
-			apiKey: "test",
-			signal: controller.signal,
-			onPayload: (params) => {
-				payload = structuredClone(params);
-				controller.abort();
-				return undefined;
-			},
+	const events = stream(model, normalizeContext({ messages }), {
+		apiKey: "test",
+		signal: controller.signal,
+		onPayload: (params) => {
+			payload = structuredClone(params);
+			controller.abort();
+			return undefined;
 		},
-	);
+	});
 	for await (const _ of events);
-	return payload as { messages: { content: unknown }[] };
+	return payload as { messages: Record<string, unknown>[] };
 }
+
+const piPayload = (users: UserContent[], id?: string) =>
+	piMessagesPayload(
+		users.map((content, index) => ({ role: "user", content, timestamp: index })),
+		id,
+	);
 
 const marker = (index: number) => ({ type: "text" as const, text: `[[pi-media:e1:${index}]]` });
 const contentOf = (payload: unknown) => (payload as { messages: { content: unknown }[] }).messages.map((m) => m.content);
 
 test("takes priority over the Chat Completions adapter for OpenRouter only", () => {
-	assert.equal(findAdapter({ api: "openai-completions", provider: "openai" })?.carries("video/mp4"), false);
-	assert.equal(adapter.carries("video/mp4"), true);
+	assert.equal(findAdapter({ api: "openai-completions", provider: "openai" })?.carries("video/mp4", "user"), false);
+	assert.equal(adapter.carries("video/mp4", "user"), true);
 });
 
 test("carries PDFs, the audio formats and the video types that OpenRouter lists, and no other types", () => {
@@ -99,8 +101,10 @@ test("carries PDFs, the audio formats and the video types that OpenRouter lists,
 			"image/heic",
 			"text/plain",
 			"constructor",
-		].map((type) => adapter.carries(type)),
-		[true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false, false],
+		].map((type) => [adapter.carries(type, "user"), adapter.carries(type, "toolResult")]),
+		[true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false, false].map(
+			(carried) => [carried, carried],
+		),
 	);
 });
 
@@ -174,11 +178,10 @@ test("keeps the cache marker of anthropic models on the last text part when the 
 	]);
 });
 
-test("leaves markers in assistant, tool and system messages", () => {
+test("leaves markers in assistant and system messages", () => {
 	const payload = {
 		messages: [
 			{ role: "assistant", content: "I saw [[pi-media:e1:8]]" },
-			{ role: "tool", tool_call_id: "t1", content: "[[pi-media:e1:1]]" },
 			{ role: "system", content: [{ type: "text", text: "[[pi-media:e1:0]]" }] },
 		],
 	};
@@ -194,4 +197,75 @@ test("keeps untouched messages by reference", () => {
 	assert.equal(result.messages[0], system);
 	assert.equal(result.messages[1], earlier);
 	assert.deepEqual(result.messages[2], { role: "user", content: [videoPart("data:video/webm;base64,GkXfow==")] });
+});
+
+const usage = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+const pdfNote = "Read PDF file [application/pdf]: /tmp/x/report.pdf";
+
+// A user prompt, an assistant message that calls `read`, and its result with the note and the marker.
+const readTurn: Message[] = [
+	{ role: "user", content: "read the file", timestamp: 0 },
+	{
+		role: "assistant",
+		content: [{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "/tmp/x/report.pdf" } }],
+		api: "openai-completions",
+		provider: "openrouter",
+		model: "google/gemini-2.5-flash",
+		usage,
+		stopReason: "toolUse",
+		timestamp: 1,
+	},
+	{
+		role: "toolResult",
+		toolCallId: "call_1",
+		toolName: "read",
+		content: [
+			{ type: "text", text: pdfNote },
+			{ type: "text", text: "[[pi-media:e1:0]]" },
+		],
+		isError: false,
+		timestamp: 2,
+	},
+];
+
+const toolTail = async (attachment: { path: string; mimeType: string; data: string } | undefined) => {
+	const payload = await piMessagesPayload(readTurn);
+	const result = adapter.rewrite(payload, (entryId, index) => (entryId === "e1" && index === 0 ? attachment : undefined));
+	return (result as { messages: unknown[] }).messages.slice(2);
+};
+const toolNote = { role: "tool", content: pdfNote, tool_call_id: "call_1" };
+
+test("moves each carried kind from a tool result to a user message after it", async () => {
+	const kinds = [
+		[0, pdfPart],
+		[1, audioPart("UklGRiQAAAA=", "wav")],
+		[2, audioPart("//uQRAAAAAA=", "mp3")],
+		[3, audioPart("Rk9STQ==", "aiff")],
+		[4, audioPart("//FQ", "aac")],
+		[5, audioPart("T2dnUwAC", "ogg")],
+		[6, audioPart("ZkxhQw==", "flac")],
+		[7, audioPart("AAAAHGZ0eXBNNEE=", "m4a")],
+		[8, videoPart("data:video/mp4;base64,AAAAGGZ0eXA=")],
+		[9, videoPart("data:video/mpeg;base64,AAABug==")],
+		[10, videoPart("data:video/webm;base64,GkXfow==")],
+	] as const;
+	for (const [index, part] of kinds) {
+		assert.deepEqual(await toolTail(attachments.e1[index]), [
+			toolNote,
+			{ role: "user", content: [{ type: "text", text: "Attached file(s) from tool result:" }, part] },
+		]);
+	}
+});
+
+test("removes the tool result marker of a type it does not carry or a missing attachment, and keeps the note", async () => {
+	for (const attachment of [attachments.e1[11], attachments.e1[13], undefined]) {
+		assert.deepEqual(await toolTail(attachment), [toolNote]);
+	}
 });

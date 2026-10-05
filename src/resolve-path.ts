@@ -7,10 +7,11 @@ import { fileURLToPath } from "node:url";
 
 function expand(path: string) {
 	const spaced = path.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
-	if (spaced === "~") return homedir();
-	if (spaced.startsWith("~/")) return join(homedir(), spaced.slice(2));
-	if (spaced.startsWith("file://")) return fileURLToPath(spaced);
-	return spaced;
+	const bare = spaced.startsWith("@") ? spaced.slice(1) : spaced;
+	if (bare === "~") return homedir();
+	if (bare.startsWith("~/")) return join(homedir(), bare.slice(2));
+	if (bare.startsWith("file://")) return fileURLToPath(bare);
+	return bare;
 }
 
 // macOS writes a narrow no-break space before AM/PM in screenshot names, stores names in NFD,

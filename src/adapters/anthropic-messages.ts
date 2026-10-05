@@ -39,7 +39,7 @@ function keepCacheControl(original: Message, rewritten: Message) {
 	return { ...rewritten, content: [...content.slice(0, -1), { ...last, cache_control: marked.cache_control }] };
 }
 
-function rewrite(payload: unknown, attachment: FindAttachment) {
+function rewriteUserText(payload: unknown, attachment: FindAttachment) {
 	const result = rewriteUserMessages(payload, shape, attachment, documentBlock);
 	if (!result) return undefined;
 	const original = (payload as { messages: Message[] }).messages;
@@ -50,6 +50,30 @@ function rewrite(payload: unknown, attachment: FindAttachment) {
 			message === original[index] ? message : keepCacheControl(original[index], message),
 		),
 	};
+}
+
+// pi-ai puts consecutive tool results in one user message of `tool_result` blocks. Each block keeps its text in
+// `content`, as one joined string or as blocks, so the user-message rewrite applies one level down.
+const toolResultShape: PayloadShape = {
+	...shape,
+	messages: "content",
+	isUser: (block) => block.type === "tool_result",
+};
+
+function rewriteToolResults(payload: unknown, attachment: FindAttachment) {
+	const messages = (payload as { messages?: unknown } | undefined)?.messages;
+	if (!Array.isArray(messages)) return undefined;
+	const rewritten = messages.map(
+		(message) => rewriteUserMessages(message, toolResultShape, attachment, documentBlock) ?? message,
+	);
+	return rewritten.some((message, index) => message !== messages[index])
+		? { ...(payload as object), messages: rewritten }
+		: undefined;
+}
+
+function rewrite(payload: unknown, attachment: FindAttachment) {
+	const users = rewriteUserText(payload, attachment);
+	return rewriteToolResults(users ?? payload, attachment) ?? users;
 }
 
 registerAdapter({ api: "anthropic-messages", carries, rewrite });

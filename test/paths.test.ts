@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { findLocalMedia } from "../src/media.ts";
+import { resolveExistingPath } from "../src/resolve-path.ts";
 import { fixtureDir, MP3_BYTES, PNG_BYTES } from "./fixtures.ts";
 
 const PNG_IMAGE = { type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ", mimeType: "image/png" };
@@ -92,6 +93,11 @@ test("resolves ~/ against the home directory", async (t) => {
 test("keeps trailing punctuation and brackets outside a bare path", async () => {
 	assert.deepEqual(await findLocalMedia(`what is ${dir}/report.pdf?`, "/"), only(report));
 	assert.deepEqual(await findLocalMedia(`see (${dir}/report.pdf), ['${dir}/clip.mp3'].`, "/"), only(report, clip));
+});
+
+test("resolves a path with a leading @ to the path without it", async () => {
+	assert.equal(await resolveExistingPath("@report.pdf", dir), join(dir, "report.pdf"));
+	assert.equal(await resolveExistingPath(`@${dir}/report.pdf`, "/"), join(dir, "report.pdf"));
 });
 
 test("finds a macOS screenshot with a narrow no-break space before AM", async () => {

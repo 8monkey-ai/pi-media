@@ -25,22 +25,34 @@ function isMediaType(mimeType: string) {
 }
 
 // Images go to pi's own image handling, so pi's detector decides what an image is.
-async function read(path: string): Promise<ImageContent | Attachment | undefined> {
+async function detectType(path: string) {
+	const imageType = await detectSupportedImageMimeTypeFromFile(path);
+	if (imageType) return { image: true, mimeType: imageType };
+	const mimeType = (await fileTypeFromFile(path))?.mime;
+	return mimeType && isMediaType(mimeType) ? { image: false, mimeType } : undefined;
+}
+
+// Finds the file that a path names if pi-media attaches it: an existing file within the size cap, of an image or media type.
+export async function findMediaFile(mention: string, cwd: string) {
+	const path = await resolveExistingPath(mention, cwd);
+	if (!path || !(await isAttachable(path))) return undefined;
+	const type = await detectType(path).catch(() => undefined);
+	return type && { path, ...type };
+}
+
+export async function readAttachment(path: string, mimeType: string): Promise<Attachment> {
+	return { path, mimeType, data: (await readFile(path)).toString("base64") };
+}
+
+async function attach(mention: string, cwd: string): Promise<ImageContent | Attachment | undefined> {
+	const file = await findMediaFile(mention, cwd);
+	if (!file) return undefined;
 	try {
-		const imageType = await detectSupportedImageMimeTypeFromFile(path);
-		if (imageType) return { type: "image", data: (await readFile(path)).toString("base64"), mimeType: imageType };
-		const mimeType = (await fileTypeFromFile(path))?.mime;
-		if (!mimeType || !isMediaType(mimeType)) return undefined;
-		return { path, mimeType, data: (await readFile(path)).toString("base64") };
+		const attachment = await readAttachment(file.path, file.mimeType);
+		return file.image ? { type: "image", data: attachment.data, mimeType: attachment.mimeType } : attachment;
 	} catch {
 		return undefined;
 	}
-}
-
-async function attach(mention: string, cwd: string) {
-	const path = await resolveExistingPath(mention, cwd);
-	if (!path || !(await isAttachable(path))) return undefined;
-	return read(path);
 }
 
 export async function findLocalMedia(text: string, cwd: string) {

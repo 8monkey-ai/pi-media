@@ -100,6 +100,36 @@ The Responses API gets audio and video as path text. OpenAI accepts at most 50 M
 
 OpenRouter models accept only some of these formats. If a model does not accept a format, the OpenRouter error shows in the UI unchanged. MOV video stays as text.
 
+## The read tool
+
+pi-media replaces pi's `read` tool. With it, the model can read audio, video and PDF files, and also text files and images.
+
+- The tool finds the file with the same path rules and the same 20 MB limit as for paths in your message. It finds the file type from the first bytes of the file.
+- For an audio, video or PDF file, the tool result has a short note, for example `Read PDF file [application/pdf]: /Users/me/report.pdf`. pi-media stores the bytes of the file in the session with the tool result. Later turns and resumed sessions send the stored bytes.
+- pi-media gives all other files, images too, to pi's own `read` tool. The result is the same as without pi-media.
+
+On each request, pi-media looks at the API of the model. If the API accepts the file in a tool result, pi-media puts the file there.
+
+| API | Kinds in a tool result | Where the file goes |
+|---|---|---|
+| OpenAI-compatible Chat Completions (`openai-completions`) | PDF, wav and mp3 audio | A user message after the tool results |
+| OpenRouter (`openai-completions`, provider `openrouter`) | The same kinds as in your message | A user message after the tool results |
+| Gemini API (`google-generative-ai`) and Vertex AI (`google-vertex`) | Audio, video, PDF | Gemini 3 and later: PDF in `functionResponse.parts`, audio and video in a user turn after the tool results. Older models: all files in a user turn after the tool results |
+| Anthropic Messages (`anthropic-messages`) | PDF | A `document` block in the `tool_result` content, after the note |
+| Amazon Bedrock Converse (`bedrock-converse-stream`) | PDF, video | A `document` or `video` block in the `toolResult` content |
+| OpenAI Responses, Azure OpenAI Responses and OpenAI Codex (`openai-responses`, `azure-openai-responses`, `openai-codex-responses`) | PDF | An `input_file` part in the `function_call_output` `output`, after the note |
+| All other APIs | None | |
+
+Chat Completions tool messages take only text. pi-media puts the file in the user message that pi adds for tool result images, or adds one user message with the text `Attached file(s) from tool result:` after the tool results. Gemini gets a user turn that starts with `Tool result file:`.
+
+If the API does not accept the file in a tool result, the model gets this note after the tool result, and no file:
+
+```
+[The API of the current model cannot take this file type. The file content is not in this request.]
+```
+
+If another extension also replaces `read`, it conflicts with pi-media. Pi uses the `read` tool of the extension that loads first.
+
 ## Limits
 
 - A path stays as you typed it if it does not point to an existing, non-empty file of a supported type. Directories, missing files, empty files and other file types stay as text.

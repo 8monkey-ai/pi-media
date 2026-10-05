@@ -3,15 +3,29 @@ import type { Attachment } from "../media-entry.ts";
 import { registerAdapter } from "./registry.ts";
 import { type PayloadShape, rewriteUserMessages } from "./user-messages.ts";
 
-const shape: PayloadShape = {
+function inputText(node: unknown) {
+	const { type, text } = (node ?? {}) as { type?: unknown; text?: unknown };
+	return type === "input_text" && typeof text === "string" ? text : undefined;
+}
+
+const textNode = (text: string) => ({ type: "input_text", text });
+
+const userShape: PayloadShape = {
 	messages: "input",
 	isUser: (item) => item.role === "user",
 	content: "content",
-	textOf: (node) => {
-		const { type, text } = (node ?? {}) as { type?: unknown; text?: unknown };
-		return type === "input_text" && typeof text === "string" ? text : undefined;
-	},
-	textNode: (text) => ({ type: "input_text", text }),
+	textOf: inputText,
+	textNode,
+};
+
+// pi-ai joins the text of a tool result into the string `output` of the item, or into its first `input_text` when the
+// result has images. The API accepts `input_file` parts in `output`.
+const toolOutputShape: PayloadShape = {
+	messages: "input",
+	isUser: (item) => item.type === "function_call_output" || item.type === "custom_tool_call_output",
+	content: "output",
+	textOf: inputText,
+	textNode,
 };
 
 function carries(mimeType: string) {
@@ -26,7 +40,10 @@ function filePart({ path, mimeType, data }: Attachment) {
 for (const api of ["openai-responses", "azure-openai-responses", "openai-codex-responses"]) {
 	registerAdapter({
 		api,
-		carries,
-		rewrite: (payload, attachment) => rewriteUserMessages(payload, shape, attachment, filePart),
+		carries: (mimeType) => carries(mimeType),
+		rewrite: (payload, attachment) => {
+			const users = rewriteUserMessages(payload, userShape, attachment, filePart);
+			return rewriteUserMessages(users ?? payload, toolOutputShape, attachment, filePart) ?? users;
+		},
 	});
 }

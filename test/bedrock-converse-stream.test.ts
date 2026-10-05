@@ -105,7 +105,7 @@ test("carries PDFs and the video and audio types that Converse has a format for"
 		"text/plain",
 	];
 	assert.deepEqual(
-		types.map((type) => adapter.carries(type)),
+		types.map((type) => adapter.carries(type, "user")),
 		[true, true, true, true, true, false, false, false, false],
 	);
 });
@@ -205,35 +205,112 @@ test("removes a marker whose attachment is missing or of a type it does not carr
 	]);
 });
 
-test("leaves markers in assistant messages and tool results", async () => {
+test("carries PDFs and video in tool results, and not audio", () => {
+	const types = ["application/pdf", "video/mp4", "video/3gpp", "audio/mpeg", "audio/wav", "image/heic", "text/plain"];
+	assert.deepEqual(
+		types.map((type) => adapter.carries(type, "toolResult")),
+		[true, true, true, false, false, false, false],
+	);
+});
+
+const readCall = (id: string): Message =>
+	assistant([{ type: "toolCall", id, name: "read", arguments: { path: "/tmp/x/report.pdf" } }], "toolUse");
+
+const readResult = (id: string, ...texts: string[]): Message => ({
+	role: "toolResult",
+	toolCallId: id,
+	toolName: "read",
+	content: texts.map((text) => ({ type: "text", text })),
+	isError: false,
+	timestamp: 1,
+});
+
+const pdfNote = "Read PDF file [application/pdf]: /tmp/x/report.pdf";
+const readPayload = () => payloadFor([user("read it"), readCall("t1"), readResult("t1", pdfNote, "[[pi-media:e1:0]]")]);
+const readOf =
+	(mimeType: string, path = "/tmp/x/report.pdf") =>
+	(entryId: string, index: number) =>
+		entryId === "e1" && index === 0 ? { path, mimeType, data: pdf } : undefined;
+const toolResult = (toolUseId: string, ...content: unknown[]) => ({ toolResult: { toolUseId, content, status: "success" } });
+
+test("replaces a tool result marker with a document block and keeps the cache point last", async () => {
+	const payload = await readPayload();
+	assert.deepEqual(payload.messages[2], {
+		role: "user",
+		content: [toolResult("t1", { text: pdfNote }, { text: "[[pi-media:e1:0]]" }), cachePoint],
+	});
+	const result = adapter.rewrite(payload, readOf("application/pdf")) as typeof payload;
+	assert.deepEqual(result.messages[2], {
+		role: "user",
+		content: [toolResult("t1", { text: pdfNote }, docBlock("report")), cachePoint],
+	});
+	assert.equal(result.messages[0], payload.messages[0]);
+	assert.equal(result.messages[1], payload.messages[1]);
+});
+
+test("replaces a tool result marker with a video block", async () => {
+	const payload = await readPayload();
+	const result = adapter.rewrite(payload, readOf("video/mp4", "/tmp/x/clip.mp4")) as typeof payload;
+	assert.deepEqual(result.messages[2], {
+		role: "user",
+		content: [toolResult("t1", { text: pdfNote }, { video: { format: "mp4", source: { bytes: pdfBytes } } }), cachePoint],
+	});
+});
+
+test("removes a tool result marker whose attachment is missing or of a type it does not carry, and keeps the note", async () => {
+	const payload = await readPayload();
+	const expected = { role: "user", content: [toolResult("t1", { text: pdfNote }), cachePoint] };
+	assert.deepEqual((adapter.rewrite(payload, readOf("audio/mpeg")) as typeof payload).messages[2], expected);
+	assert.deepEqual((adapter.rewrite(payload, () => undefined) as typeof payload).messages[2], expected);
+});
+
+test("changes only the tool result with media when two tool results come in a row", async () => {
 	const payload = await payloadFor([
-		user("go"),
+		user("read both"),
 		assistant(
 			[
-				{ type: "text", text: "I saw [[pi-media:e1:0]]" },
 				{ type: "toolCall", id: "t1", name: "read", arguments: {} },
+				{ type: "toolCall", id: "t2", name: "read", arguments: {} },
 			],
 			"toolUse",
 		),
-		{
-			role: "toolResult",
-			toolCallId: "t1",
-			toolName: "read",
-			content: [{ type: "text", text: "[[pi-media:e1:1]]" }],
-			isError: false,
-			timestamp: 1,
-		},
+		readResult("t1", pdfNote, "[[pi-media:e1:0]]"),
+		readResult("t2", "plain text"),
 	]);
-	assert.deepEqual(payload.messages.slice(1), [
-		{
-			role: "assistant",
-			content: [{ text: "I saw [[pi-media:e1:0]]" }, { toolUse: { toolUseId: "t1", name: "read", input: {} } }],
-		},
+	const before = payload.messages[2] as { content: unknown[] };
+	const result = adapter.rewrite(payload, readOf("application/pdf")) as typeof payload;
+	assert.deepEqual(result.messages[2], {
+		role: "user",
+		content: [toolResult("t1", { text: pdfNote }, docBlock("report")), toolResult("t2", { text: "plain text" }), cachePoint],
+	});
+	assert.equal((result.messages[2] as { content: unknown[] }).content[1], before.content[1]);
+});
+
+test("names documents in user messages and tool results in message order, the same way each time", async () => {
+	const payload = await payloadFor([
+		user("see /gone/doc.pdf", "[[pi-media:e1:0]]"),
+		readCall("t1"),
+		readResult("t1", "Read PDF file [application/pdf]: /gone/doc.pdf", "[[pi-media:e1:0]]"),
+		assistant([{ type: "text", text: "ok" }]),
+		user("and /other/doc.pdf", "[[pi-media:e1:4]]"),
+	]);
+	const expected = [
+		{ role: "user", content: [{ text: "see /gone/doc.pdf" }, docBlock("doc")] },
+		payload.messages[1],
 		{
 			role: "user",
-			content: [{ toolResult: { toolUseId: "t1", content: [{ text: "[[pi-media:e1:1]]" }], status: "success" } }, cachePoint],
+			content: [toolResult("t1", { text: "Read PDF file [application/pdf]: /gone/doc.pdf" }, docBlock("doc (2)"))],
 		},
-	]);
+		{ role: "assistant", content: [{ text: "ok" }] },
+		{ role: "user", content: [{ text: "and /other/doc.pdf" }, docBlock("doc (3)"), cachePoint] },
+	];
+	assert.deepEqual((rewrite(payload) as typeof payload).messages, expected);
+	assert.deepEqual((rewrite(payload) as typeof payload).messages, expected);
+});
+
+test("leaves markers in assistant messages", async () => {
+	const payload = await payloadFor([user("go"), assistant([{ type: "text", text: "I saw [[pi-media:e1:0]]" }]), user("next")]);
+	assert.deepEqual(payload.messages[1], { role: "assistant", content: [{ text: "I saw [[pi-media:e1:0]]" }] });
 	assert.equal(rewrite(payload), undefined);
 });
 

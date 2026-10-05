@@ -59,6 +59,16 @@ test("returns undefined when the adapter carries none of the attachments", () =>
 	assert.equal(markContext(messages, branch, { carries: () => false }), undefined);
 });
 
+test("does not mark user attachments for an adapter that carries files only in tool results", () => {
+	const { branch, messages } = sessionWithMedia();
+	assert.equal(markContext(messages, branch, { carries: (_mimeType, place) => place === "toolResult" }), undefined);
+});
+
+test("returns undefined without an adapter", () => {
+	const { branch, messages } = sessionWithMedia();
+	assert.equal(markContext(messages, branch, undefined), undefined);
+});
+
 test("returns undefined when no user message has media", () => {
 	const session = SessionManager.inMemory("/");
 	session.appendMessage({ role: "user", content: "hello", timestamp: 1 });

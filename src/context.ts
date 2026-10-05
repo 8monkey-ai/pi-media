@@ -1,23 +1,54 @@
 import type { ContextEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Adapter } from "./adapters/adapter.ts";
 import { makeMarker } from "./marker.ts";
-import { mediaForContext } from "./media-entry.ts";
+import { mediaForContext, toolResultAttachment } from "./media-entry.ts";
 
-// Adds one marker block per attachment that the adapter carries to each linked user message, for this request only.
-export function markContext(messages: ContextEvent["messages"], branch: SessionEntry[], adapter: Pick<Adapter, "carries">) {
+type Messages = ContextEvent["messages"];
+type Carries = Adapter["carries"];
+
+const NOT_IN_REQUEST = "[The API of the current model cannot take this file type. The file content is not in this request.]";
+
+function textBlock(text: string) {
+	return { type: "text" as const, text };
+}
+
+// Adds one marker block per attachment that the adapter carries to each linked user message.
+function markUserMessages(messages: Messages, branch: SessionEntry[], carries: Carries): Messages {
 	const markers = mediaForContext(messages, branch).map((entries) =>
 		entries.flatMap((entry) =>
 			(entry.data?.attachments ?? []).flatMap((attachment, index) =>
-				adapter.carries(attachment.mimeType) ? [{ type: "text" as const, text: makeMarker(entry.id, index) }] : [],
+				carries(attachment.mimeType, "user") ? [textBlock(makeMarker(entry.id, index))] : [],
 			),
 		),
 	);
-	if (markers.every((blocks) => blocks.length === 0)) return undefined;
-	return {
-		messages: messages.map((message, position) => {
-			if (message.role !== "user" || markers[position].length === 0) return message;
-			const content = typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content;
-			return { ...message, content: [...content, ...markers[position]] };
-		}),
-	};
+	return messages.map((message, position) => {
+		if (message.role !== "user" || markers[position].length === 0) return message;
+		const content = typeof message.content === "string" ? [textBlock(message.content)] : message.content;
+		return { ...message, content: [...content, ...markers[position]] };
+	});
+}
+
+// Adds a marker block to each tool result whose attachment the adapter carries, and a note to the other tool results
+// with an attachment, so the model knows that it did not get the file.
+function markToolResults(messages: Messages, branch: SessionEntry[], carries: Carries): Messages {
+	const entryIds = new Map(
+		branch.flatMap((entry) =>
+			entry.type === "message" && entry.message.role === "toolResult" ? [[entry.message.toolCallId, entry.id]] : [],
+		),
+	);
+	return messages.map((message) => {
+		if (message.role !== "toolResult") return message;
+		const attachment = toolResultAttachment(message);
+		if (!attachment) return message;
+		const entryId = entryIds.get(message.toolCallId);
+		const placed = entryId !== undefined && carries(attachment.mimeType, "toolResult");
+		return { ...message, content: [...message.content, textBlock(placed ? makeMarker(entryId, 0) : NOT_IN_REQUEST)] };
+	});
+}
+
+// Changes the messages of this request only. Returns undefined when no message changes.
+export function markContext(messages: Messages, branch: SessionEntry[], adapter: Pick<Adapter, "carries"> | undefined) {
+	const carries: Carries = (mimeType, place) => adapter?.carries(mimeType, place) ?? false;
+	const marked = markToolResults(markUserMessages(messages, branch, carries), branch, carries);
+	return marked.some((message, index) => message !== messages[index]) ? { messages: marked } : undefined;
 }

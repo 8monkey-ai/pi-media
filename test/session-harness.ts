@@ -1,7 +1,13 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type FauxResponseFactory, fauxAssistantMessage, fauxProvider, type Message } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	type FauxResponseFactory,
+	fauxAssistantMessage,
+	fauxProvider,
+	type Message,
+} from "@earendil-works/pi-ai";
 import {
 	createAgentSession,
 	DefaultResourceLoader,
@@ -19,17 +25,32 @@ function userPayload(messages: Message[]) {
 	return { messages: messages.filter((message) => message.role === "user").map(({ role, content }) => ({ role, content })) };
 }
 
+type SessionOptions = {
+	files?: Record<string, string | Buffer>;
+	sessionManager?: (dir: string) => SessionManager;
+	api?: string;
+	tools?: string[];
+	reply?: (messages: Message[]) => AssistantMessage;
+	payload?: (messages: Message[]) => unknown;
+};
+
 // Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
 // A model call waits until `settle` runs, so a test can queue input while pi streams.
 // `files` go into the working directory. `sessionManager` defaults to an in-memory one.
-// `api` is the API of the model. It defaults to Chat Completions, the shape of the payload.
+// `api` is the API of the model. It defaults to Chat Completions, the shape of the default payload.
+// `tools` names the active tools; there are none by default.
+// `reply` makes the answer of the model from the request messages, for example a tool call. It defaults to "ok".
+// `payload` makes the provider payload from the request messages. It defaults to the user messages in Chat Completions shape.
 export async function startSession(
 	extensions: ExtensionFactory[],
 	{
 		files = {},
 		sessionManager,
 		api = "openai-completions",
-	}: { files?: Record<string, string | Buffer>; sessionManager?: (dir: string) => SessionManager; api?: string } = {},
+		tools = [],
+		reply = () => fauxAssistantMessage("ok"),
+		payload: makePayload = userPayload,
+	}: SessionOptions = {},
 ) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-media-session-"));
 	for (const [name, content] of Object.entries(files)) await writeFile(join(dir, name), content);
@@ -42,10 +63,10 @@ export async function startSession(
 	const requests: Request[] = [];
 	const faux = fauxProvider({ api });
 	const respond: FauxResponseFactory = async (context, options, _state, model) => {
-		const payload = userPayload(context.messages);
+		const payload = makePayload(context.messages);
 		requests.push({ messages: context.messages, payload: (await options?.onPayload?.(payload, model)) ?? payload });
 		await new Promise<void>((resolve) => gates.push(resolve));
-		return fauxAssistantMessage("ok");
+		return reply(context.messages);
 	};
 	faux.setResponses(Array.from({ length: 50 }, () => respond));
 
@@ -70,7 +91,7 @@ export async function startSession(
 		resourceLoader,
 		settingsManager,
 		sessionManager: sessionManager?.(dir) ?? SessionManager.inMemory(dir),
-		tools: [],
+		tools,
 	});
 
 	async function waitForCall() {
