@@ -1,14 +1,23 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type Message, type Model, normalizeContext } from "@earendil-works/pi-ai";
+import type { Message, Model, ToolResultMessage } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import "../src/adapters/openai-completions.ts";
-import { findAdapter } from "../src/adapters/registry.ts";
+import {
+	adapterFor,
+	assertPureRewrite,
+	assistantOf,
+	capturePayload,
+	findIn,
+	pdfNote,
+	pdfRead,
+	readTurn as readTurnOf,
+	readResult as toolResult,
+} from "./pi-payload.ts";
 
-const adapter = findAdapter({ api: "openai-completions", provider: "any" });
-assert.ok(adapter);
+const adapter = adapterFor({ api: "openai-completions", provider: "any" });
 
-const attachments: Record<string, { path: string; mimeType: string; data: string }[]> = {
+const find = findIn({
 	e1: [
 		{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" },
 		{ path: "/gone/a.mp3", mimeType: "audio/mpeg", data: "//uQRAAAAAA=" },
@@ -18,8 +27,7 @@ const attachments: Record<string, { path: string; mimeType: string; data: string
 		{ path: "/gone/shot.heic", mimeType: "image/heic", data: "AAAA" },
 	],
 	abc: [{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
-};
-const find = (entryId: string, index: number) => attachments[entryId]?.[index];
+});
 const rewrite = (payload: unknown) => adapter.rewrite(payload, find);
 
 const pdfPart = { type: "file", file: { filename: "doc.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } };
@@ -44,19 +52,7 @@ async function piMessagesPayload(messages: Message[], { provider = "openai", id 
 		maxTokens: 100,
 		compat,
 	};
-	const controller = new AbortController();
-	let payload: unknown;
-	const events = stream(model, normalizeContext({ messages }), {
-		apiKey: "test",
-		signal: controller.signal,
-		onPayload: (params) => {
-			payload = structuredClone(params);
-			controller.abort();
-			return undefined;
-		},
-	});
-	for await (const _ of events);
-	return payload as { messages: Record<string, unknown>[] };
+	return (await capturePayload(stream, model, messages, { apiKey: "test" })) as { messages: Record<string, unknown>[] };
 }
 
 const piPayload = (users: UserContent[], options?: ModelOptions) =>
@@ -182,59 +178,16 @@ test("passes through payloads without a message list", () => {
 	}
 });
 
-const usage = {
-	input: 0,
-	output: 0,
-	cacheRead: 0,
-	cacheWrite: 0,
-	totalTokens: 0,
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
-const pdfNote = "Read PDF file [application/pdf]: /tmp/x/report.pdf";
 const followUp = (...parts: unknown[]) => ({
 	role: "user",
 	content: [{ type: "text", text: "Attached file(s) from tool result:" }, ...parts],
 });
 
-function toolResult(
-	toolCallId: string,
-	content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[],
-): Message {
-	return { role: "toolResult", toolCallId, toolName: "read", content, isError: false, timestamp: 2 };
-}
+const readPdf = (toolCallId = "call_1") => toolResult(toolCallId, pdfRead("[[pi-media:e1:0]]"));
 
-const readPdf = (toolCallId = "call_1") =>
-	toolResult(toolCallId, [
-		{ type: "text", text: pdfNote },
-		{ type: "text", text: "[[pi-media:e1:0]]" },
-	]);
+const readTurn = (...results: ToolResultMessage[]) =>
+	readTurnOf(assistantOf({ api: "openai-completions", provider: "openai", id: "gpt-4o" }), ...results);
 
-// A user prompt, an assistant message that calls `read` once for each result, and the results.
-function readTurn(...results: Message[]): Message[] {
-	const toolCalls = results.map((result) => ({
-		type: "toolCall" as const,
-		id: (result as { toolCallId: string }).toolCallId,
-		name: "read",
-		arguments: { path: "/tmp/x/report.pdf" },
-	}));
-	return [
-		{ role: "user", content: "read the file", timestamp: 0 },
-		{
-			role: "assistant",
-			content: toolCalls,
-			api: "openai-completions",
-			provider: "openai",
-			model: "gpt-4o",
-			usage,
-			stopReason: "toolUse",
-			timestamp: 1,
-		},
-		...results,
-	];
-}
-
-const lookup = (entries: Record<string, { path: string; mimeType: string; data: string }>) => (entryId: string, index: number) =>
-	index === 0 ? entries[entryId] : undefined;
 const pdf = { path: "/tmp/x/report.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" };
 const reportPart = { type: "file", file: { filename: "report.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } };
 const messagesOf = (payload: unknown) => (payload as { messages: unknown[] }).messages;
@@ -252,7 +205,7 @@ test("moves each carried kind from a tool result to a user message after it", as
 	] as const;
 	for (const [attachment, part] of kinds) {
 		const payload = await piMessagesPayload(readTurn(readPdf()));
-		const result = messagesOf(adapter.rewrite(payload, lookup({ e1: attachment })));
+		const result = messagesOf(adapter.rewrite(payload, findIn({ e1: [attachment] })));
 		assert.equal(result[0], payload.messages[0]);
 		assert.equal(result[1], payload.messages[1]);
 		assert.deepEqual(result.slice(2), [{ role: "tool", content: pdfNote, tool_call_id: "call_1" }, followUp(part)]);
@@ -261,7 +214,7 @@ test("moves each carried kind from a tool result to a user message after it", as
 
 test("removes the tool result marker of a type it does not carry or a missing attachment, and keeps the note", async () => {
 	const video = { path: "/tmp/x/clip.mp4", mimeType: "video/mp4", data: "AAAAGGZ0eXA=" };
-	for (const find of [lookup({ e1: video }), lookup({})]) {
+	for (const find of [findIn({ e1: [video] }), findIn({})]) {
 		const payload = await piMessagesPayload(readTurn(readPdf()));
 		assert.deepEqual(messagesOf(adapter.rewrite(payload, find)).slice(2), [
 			{ role: "tool", content: pdfNote, tool_call_id: "call_1" },
@@ -273,7 +226,7 @@ test("leaves tool result text that only contains a marker", async () => {
 	const payload = await piMessagesPayload(
 		readTurn(toolResult("call_1", [{ type: "text", text: "file says [[pi-media:abc:0]] literal" }])),
 	);
-	assert.equal(adapter.rewrite(payload, lookup({ abc: pdf })), undefined);
+	assert.equal(adapter.rewrite(payload, findIn({ abc: [pdf] })), undefined);
 });
 
 test("takes only the marker lines at the end of a tool result", async () => {
@@ -285,7 +238,7 @@ test("takes only the marker lines at the end of a tool result", async () => {
 			]),
 		),
 	);
-	assert.deepEqual(messagesOf(adapter.rewrite(payload, lookup({ abc: pdf, e1: pdf }))).slice(2), [
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, findIn({ abc: [pdf], e1: [pdf] }))).slice(2), [
 		{ role: "tool", content: "first\n[[pi-media:abc:0]]\nlast", tool_call_id: "call_1" },
 		followUp(reportPart),
 	]);
@@ -295,7 +248,7 @@ test("puts the files after the last of consecutive tool results", async () => {
 	const payload = await piMessagesPayload(
 		readTurn(readPdf("call_1"), toolResult("call_2", [{ type: "text", text: "line one" }])),
 	);
-	const result = messagesOf(adapter.rewrite(payload, lookup({ e1: pdf })));
+	const result = messagesOf(adapter.rewrite(payload, findIn({ e1: [pdf] })));
 	assert.equal(result[3], payload.messages[3]);
 	assert.deepEqual(result.slice(2), [
 		{ role: "tool", content: pdfNote, tool_call_id: "call_1" },
@@ -310,7 +263,7 @@ test("adds the files to the user message that pi-ai adds for tool result images"
 		{ type: "image", data: "xx", mimeType: "image/png" },
 	]);
 	const payload = await piMessagesPayload(readTurn(image, readPdf("call_2")));
-	assert.deepEqual(messagesOf(adapter.rewrite(payload, lookup({ e1: pdf }))).slice(2), [
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, findIn({ e1: [pdf] }))).slice(2), [
 		{ role: "tool", content: "Read image file [image/png]", tool_call_id: "call_1" },
 		{ role: "tool", content: pdfNote, tool_call_id: "call_2" },
 		{
@@ -329,7 +282,7 @@ test("puts the files after the assistant message that pi-ai adds after tool resu
 	const bridge = { role: "assistant", content: "I have processed the tool results." };
 	const next: Message = { role: "user", content: "and now?", timestamp: 3 };
 	const payload = await piMessagesPayload([...readTurn(readPdf()), next], { compat });
-	assert.deepEqual(messagesOf(adapter.rewrite(payload, lookup({ e1: pdf }))).slice(2), [
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, findIn({ e1: [pdf] }))).slice(2), [
 		{ role: "tool", content: pdfNote, tool_call_id: "call_1" },
 		bridge,
 		followUp(reportPart),
@@ -338,7 +291,7 @@ test("puts the files after the assistant message that pi-ai adds after tool resu
 
 	const image = toolResult("call_2", [{ type: "image", data: "xx", mimeType: "image/png" }]);
 	const withImage = await piMessagesPayload(readTurn(readPdf(), image), { compat });
-	assert.deepEqual(messagesOf(adapter.rewrite(withImage, lookup({ e1: pdf }))).slice(2), [
+	assert.deepEqual(messagesOf(adapter.rewrite(withImage, findIn({ e1: [pdf] }))).slice(2), [
 		{ role: "tool", content: pdfNote, tool_call_id: "call_1" },
 		{ role: "tool", content: "(see attached image)", tool_call_id: "call_2" },
 		bridge,
@@ -356,7 +309,7 @@ test("puts the files after the assistant message that pi-ai adds after tool resu
 test("adds the assistant message that pi-ai adds after tool results for some providers when the tool results are last", async () => {
 	const payload = await piMessagesPayload(readTurn(readPdf()), { compat: { requiresAssistantAfterToolResult: true } });
 	assert.equal(payload.messages[1].content, "");
-	assert.deepEqual(messagesOf(adapter.rewrite(payload, lookup({ e1: pdf }))).slice(2), [
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, findIn({ e1: [pdf] }))).slice(2), [
 		{ role: "tool", content: pdfNote, tool_call_id: "call_1" },
 		{ role: "assistant", content: "I have processed the tool results." },
 		followUp(reportPart),
@@ -374,7 +327,7 @@ test("rewrites a user message marker and a tool result marker in the same payloa
 	};
 	const payload = await piMessagesPayload([prompt, ...readTurn(readPdf()).slice(1)]);
 	const mp3 = { path: "/tmp/x/a.mp3", mimeType: "audio/mpeg", data: "//uQRAAAAAA=" };
-	const result = messagesOf(adapter.rewrite(payload, lookup({ e1: pdf, u1: mp3 })));
+	const result = messagesOf(adapter.rewrite(payload, findIn({ e1: [pdf], u1: [mp3] })));
 	assert.deepEqual(result[0], { role: "user", content: [{ type: "text", text: "see @a.mp3" }, mp3Part] });
 	assert.deepEqual(result.slice(2), [{ role: "tool", content: pdfNote, tool_call_id: "call_1" }, followUp(reportPart)]);
 });
@@ -384,7 +337,7 @@ test("keeps the cache marker on the tool result text when the tool result is the
 	assert.deepEqual(payload.messages.at(-1)?.content, [
 		{ type: "text", text: `${pdfNote}\n[[pi-media:e1:0]]`, cache_control: { type: "ephemeral" } },
 	]);
-	assert.deepEqual(messagesOf(adapter.rewrite(payload, lookup({ e1: pdf }))).slice(-2), [
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, findIn({ e1: [pdf] }))).slice(-2), [
 		{ role: "tool", content: [{ type: "text", text: pdfNote, cache_control: { type: "ephemeral" } }], tool_call_id: "call_1" },
 		followUp(reportPart),
 	]);
@@ -392,10 +345,5 @@ test("keeps the cache marker on the tool result text when the tool result is the
 
 test("gives the same result for the same tool result payload and does not change it", async () => {
 	const payload = await piMessagesPayload(readTurn(readPdf(), toolResult("call_2", [{ type: "text", text: "line one" }])));
-	const before = structuredClone(payload);
-	const find = lookup({ e1: pdf });
-	const first = adapter.rewrite(payload, find);
-	assert.equal(messagesOf(first).length, 5);
-	assert.deepEqual(adapter.rewrite(payload, find), first);
-	assert.deepEqual(payload, before);
+	assert.equal(messagesOf(assertPureRewrite(adapter, payload, findIn({ e1: [pdf] }))).length, 5);
 });

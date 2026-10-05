@@ -1,19 +1,14 @@
 import { parse } from "node:path";
 import type { Attachment } from "../media-entry.ts";
 import type { FindAttachment } from "./adapter.ts";
+import { type Build, carriesBy, type Place } from "./part-for.ts";
 import { registerAdapter } from "./registry.ts";
-import { type PayloadShape, rewriteUserMessages } from "./user-messages.ts";
+import { type Holder, isRecord, rewriteHolder, type TextShape } from "./text-holders.ts";
 
-const textOf = (node: unknown) => {
-	const { text } = (node ?? {}) as { text?: unknown };
-	return typeof text === "string" ? text : undefined;
-};
-
-const shape: PayloadShape = {
-	messages: "messages",
-	isUser: (message) => message.role === "user",
+// A Converse user message and a Converse tool result both keep their text blocks in `content`.
+const converseText: TextShape = {
 	content: "content",
-	textOf,
+	textOf: (node) => (isRecord(node) && typeof node.text === "string" ? node.text : undefined),
 	textNode: (text) => ({ text }),
 };
 
@@ -37,11 +32,6 @@ const audioFormats = new Map([
 	["audio/mp4", "mp4"],
 	["audio/x-m4a", "m4a"],
 ]);
-
-// A Converse tool result has document and video blocks, but no audio block.
-function carries(mimeType: string, place: "user" | "toolResult") {
-	return mimeType === "application/pdf" || videoFormats.has(mimeType) || (place === "user" && audioFormats.has(mimeType));
-}
 
 // Converse allows only ASCII letters and digits, single spaces, hyphens, parentheses and square brackets, up to 200 characters.
 function documentName(path: string) {
@@ -67,64 +57,59 @@ function uniqueName(name: string, used: Set<string>) {
 	return unique;
 }
 
-function block({ path, mimeType, data }: Attachment, used: Set<string>) {
-	const source = { bytes: new Uint8Array(Buffer.from(data, "base64")) };
-	if (mimeType === "application/pdf") {
-		return { document: { format: "pdf", name: uniqueName(documentName(path), used), source } };
-	}
+// `used` holds the document names that earlier blocks of the request took.
+type Block = (attachment: Attachment, used: Set<string>) => unknown;
+
+const source = (data: string) => ({ bytes: new Uint8Array(Buffer.from(data, "base64")) });
+
+const documentBlock: Block = ({ path, data }, used) => ({
+	document: { format: "pdf", name: uniqueName(documentName(path), used), source: source(data) },
+});
+
+// A Converse tool result has document and video blocks, but no audio block.
+function partFor(mimeType: string, place: Place): Block | undefined {
+	if (mimeType === "application/pdf") return documentBlock;
 	const video = videoFormats.get(mimeType);
-	if (video) return { video: { format: video, source } };
-	const audio = audioFormats.get(mimeType);
-	if (audio) return { audio: { format: audio, source } };
+	if (video) return ({ data }) => ({ video: { format: video, source: source(data) } });
+	const audio = place === "user" ? audioFormats.get(mimeType) : undefined;
+	if (audio) return ({ data }) => ({ audio: { format: audio, source: source(data) } });
 	return undefined;
 }
 
-type Message = Record<string, unknown>;
-
-const isRecord = (value: unknown): value is Message => !!value && typeof value === "object";
 const isDocument = (node: unknown) => isRecord(node) && "document" in node;
 
 // Converse requires a text block in a message that has a document.
-function withText(message: Message) {
+function withText(message: Holder) {
 	const content = message.content;
-	if (!Array.isArray(content) || content.some((node) => textOf(node) !== undefined)) return message;
+	if (!Array.isArray(content) || content.some((node) => converseText.textOf(node) !== undefined)) return message;
 	const first = content.findIndex(isDocument);
 	if (first === -1) return message;
 	return { ...message, content: content.toSpliced(first, 0, { text: content[first].document.name }) };
 }
 
-// A Converse tool result keeps its text blocks in `content`, the same way a user message does.
-const toolResultShape: PayloadShape = { ...shape, messages: "toolResults", isUser: () => true };
-
-function rewriteToolResults(message: Message, attachment: FindAttachment, part: (found: Attachment) => unknown) {
+function rewriteToolResults(message: Holder, attachment: FindAttachment, build: Build) {
 	const content = message.content;
 	if (message.role !== "user" || !Array.isArray(content)) return undefined;
-	const toolResults = content.map((node) => (isRecord(node) ? node.toolResult : undefined));
-	const rewritten = rewriteUserMessages({ toolResults }, toolResultShape, attachment, part);
-	if (!rewritten) return undefined;
-	const results = rewritten.toolResults as unknown[];
-	return {
-		...message,
-		content: content.map((node, index) =>
-			results[index] === toolResults[index] ? node : { ...node, toolResult: results[index] },
-		),
-	};
+	const results = content.map((node) =>
+		isRecord(node) && isRecord(node.toolResult) ? rewriteHolder(node.toolResult, converseText, attachment, build) : undefined,
+	);
+	if (results.every((result) => result === undefined)) return undefined;
+	return { ...message, content: content.map((node, index) => (results[index] ? { ...node, toolResult: results[index] } : node)) };
 }
 
 function rewrite(payload: unknown, attachment: FindAttachment) {
 	if (!isRecord(payload) || !Array.isArray(payload.messages)) return undefined;
 	const original: unknown[] = payload.messages;
 	const used = new Set<string>();
-	const inUser = (found: Attachment) => block(found, used);
-	const inToolResult = (found: Attachment) => (carries(found.mimeType, "toolResult") ? block(found, used) : undefined);
+	const buildIn = (place: Place) => (found: Attachment) => partFor(found.mimeType, place)?.(found, used);
 	// One message at a time, so that documents get their names in message order.
 	const messages = original.map((message) => {
 		if (!isRecord(message)) return message;
-		const user = rewriteUserMessages({ messages: [message] }, shape, attachment, inUser);
-		if (user) return withText((user.messages as Message[])[0]);
-		return rewriteToolResults(message, attachment, inToolResult) ?? message;
+		const user = message.role === "user" ? rewriteHolder(message, converseText, attachment, buildIn("user")) : undefined;
+		if (user) return withText(user);
+		return rewriteToolResults(message, attachment, buildIn("toolResult")) ?? message;
 	});
 	return messages.some((message, index) => message !== original[index]) ? { ...payload, messages } : undefined;
 }
 
-registerAdapter({ api: "bedrock-converse-stream", carries, rewrite });
+registerAdapter({ api: "bedrock-converse-stream", carries: carriesBy(partFor), rewrite });

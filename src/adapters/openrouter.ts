@@ -1,8 +1,9 @@
-import type { Attachment } from "../media-entry.ts";
-import { inputAudioPart, pdfFilePart, rewriteChatMessages } from "./openai-completions.ts";
+import { pdfOrAudioPart, rewriteChatMessages } from "./chat-completions.ts";
+import { type Build, carriesBy } from "./part-for.ts";
 import { registerAdapter } from "./registry.ts";
 
 // Keys are the MIME types that `file-type` returns; values are the format names in OpenRouter's audio guide.
+// OpenRouter accepts more audio formats than OpenAI.
 const audioFormats = new Map([
 	["audio/wav", "wav"],
 	["audio/mpeg", "mp3"],
@@ -15,17 +16,16 @@ const audioFormats = new Map([
 
 const videoTypes = new Set(["video/mp4", "video/mpeg", "video/webm"]);
 
-function part(attachment: Attachment) {
-	const { mimeType, data } = attachment;
-	if (mimeType === "application/pdf") return pdfFilePart(attachment);
-	if (videoTypes.has(mimeType)) return { type: "video_url", video_url: { url: `data:${mimeType};base64,${data}` } };
-	const format = audioFormats.get(mimeType);
-	return format && inputAudioPart(data, format);
-}
+const videoUrlPart: Build = ({ mimeType, data }) => ({
+	type: "video_url",
+	video_url: { url: `data:${mimeType};base64,${data}` },
+});
+
+const partFor = (mimeType: string) => (videoTypes.has(mimeType) ? videoUrlPart : pdfOrAudioPart(mimeType, audioFormats));
 
 registerAdapter({
 	api: "openai-completions",
 	provider: "openrouter",
-	carries: (mimeType) => mimeType === "application/pdf" || videoTypes.has(mimeType) || audioFormats.has(mimeType),
-	rewrite: (payload, attachment) => rewriteChatMessages(payload, attachment, part),
+	carries: carriesBy(partFor),
+	rewrite: (payload, attachment) => rewriteChatMessages(payload, attachment, partFor),
 });

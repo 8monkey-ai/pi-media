@@ -10,5 +10,5 @@ export interface Adapter {
 	// Whether the adapter places a file of this type in a user message or in a tool result.
 	carries(mimeType: string, place: "user" | "toolResult"): boolean;
 	// Returns undefined when the payload does not change.
-	rewrite(payload: unknown, attachment: FindAttachment): unknown | undefined;
+	rewrite(payload: unknown, attachment: FindAttachment): unknown;
 }

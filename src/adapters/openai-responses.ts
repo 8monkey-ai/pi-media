@@ -1,50 +1,42 @@
 import { basename } from "node:path";
-import type { Attachment } from "../media-entry.ts";
+import { type Build, builderIn, carriesBy } from "./part-for.ts";
 import { registerAdapter } from "./registry.ts";
-import { type PayloadShape, rewriteUserMessages } from "./user-messages.ts";
+import { type HolderList, isRecord, rewriteHolders, type TextShape } from "./text-holders.ts";
 
-function inputText(node: unknown) {
-	const { type, text } = (node ?? {}) as { type?: unknown; text?: unknown };
-	return type === "input_text" && typeof text === "string" ? text : undefined;
-}
-
-const textNode = (text: string) => ({ type: "input_text", text });
-
-const userShape: PayloadShape = {
-	messages: "input",
-	isUser: (item) => item.role === "user",
+const inputText: TextShape = {
 	content: "content",
-	textOf: inputText,
-	textNode,
+	textOf: (node) => (isRecord(node) && node.type === "input_text" && typeof node.text === "string" ? node.text : undefined),
+	textNode: (text) => ({ type: "input_text", text }),
 };
+
+const userItems: HolderList = { ...inputText, list: "input", selects: (item) => item.role === "user" };
 
 // pi-ai joins the text of a tool result into the string `output` of the item, or into its first `input_text` when the
 // result has images. The API accepts `input_file` parts in `output`.
-const toolOutputShape: PayloadShape = {
-	messages: "input",
-	isUser: (item) => item.type === "function_call_output" || item.type === "custom_tool_call_output",
+const toolOutputItems: HolderList = {
+	...inputText,
+	list: "input",
+	selects: (item) => item.type === "function_call_output" || item.type === "custom_tool_call_output",
 	content: "output",
-	textOf: inputText,
-	textNode,
 	joinsText: true,
 };
 
-function carries(mimeType: string) {
-	return mimeType === "application/pdf";
-}
+const filePart: Build = ({ path, mimeType, data }) => ({
+	type: "input_file",
+	filename: basename(path),
+	file_data: `data:${mimeType};base64,${data}`,
+});
 
-function filePart({ path, mimeType, data }: Attachment) {
-	if (!carries(mimeType)) return undefined;
-	return { type: "input_file", filename: basename(path), file_data: `data:${mimeType};base64,${data}` };
-}
+// Responses takes PDFs as input_file parts, in user messages and in tool outputs.
+const partFor = (mimeType: string) => (mimeType === "application/pdf" ? filePart : undefined);
 
 for (const api of ["openai-responses", "azure-openai-responses", "openai-codex-responses"]) {
 	registerAdapter({
 		api,
-		carries: (mimeType) => carries(mimeType),
+		carries: carriesBy(partFor),
 		rewrite: (payload, attachment) => {
-			const users = rewriteUserMessages(payload, userShape, attachment, filePart);
-			return rewriteUserMessages(users ?? payload, toolOutputShape, attachment, filePart) ?? users;
+			const users = rewriteHolders(payload, userItems, attachment, builderIn(partFor, "user"));
+			return rewriteHolders(users ?? payload, toolOutputItems, attachment, builderIn(partFor, "toolResult")) ?? users;
 		},
 	});
 }

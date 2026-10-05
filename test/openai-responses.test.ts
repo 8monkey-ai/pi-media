@@ -5,20 +5,20 @@ import { stream as azureStream } from "@earendil-works/pi-ai/api/azure-openai-re
 import { stream as codexStream } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { stream as openaiStream } from "@earendil-works/pi-ai/api/openai-responses";
 import { getModel } from "@earendil-works/pi-ai/compat";
-import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import "../src/adapters/openai-responses.ts";
-import { findAdapter } from "../src/adapters/registry.ts";
-
-const attachments: Record<string, { path: string; mimeType: string; data: string }[]> = {
-	e1: [
-		{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" },
-		{ path: "/gone/a.mp3", mimeType: "audio/mpeg", data: "//uQRAAAAAA=" },
-		{ path: "/gone/clip.mp4", mimeType: "video/mp4", data: "AAAAGGZ0eXA=" },
-		{ path: "/gone/shot.heic", mimeType: "image/heic", data: "AAAA" },
-	],
-	abc: [{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
-};
-const find = (entryId: string, index: number) => attachments[entryId]?.[index];
+import {
+	adapterFor,
+	assertPureRewrite,
+	attachments,
+	capturePayload,
+	find,
+	findIn,
+	pdfNote,
+	readTurn,
+	text,
+	readResult as toolResult,
+	user,
+} from "./pi-payload.ts";
 
 const pdfPart = { type: "input_file", filename: "doc.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" };
 const pngPart = { type: "input_image", detail: "auto", image_url: "data:image/png;base64,iVBORw0KGgo=" };
@@ -28,63 +28,43 @@ const codexToken = `x.${btoa(JSON.stringify({ "https://api.openai.com/auth": { c
 
 type Payload = { input: Record<string, unknown>[] };
 
-// Builds the request with pi-ai's own converter. The captured payload stops the request before any network call.
 async function payloadFor(api: string, messages: Message[]) {
-	const context = normalizeContext({ messages });
-	let payload: unknown;
-	const onPayload = (params: unknown) => {
-		payload = structuredClone(params);
-		throw new Error("payload captured");
-	};
-	const events =
+	const payload =
 		api === "openai-responses"
-			? openaiStream(getModel("openai", "gpt-4.1"), context, { apiKey: "test", onPayload })
+			? await capturePayload(openaiStream, getModel("openai", "gpt-4.1"), messages, { apiKey: "test" })
 			: api === "azure-openai-responses"
-				? azureStream(getModel("azure", "gpt-4.1"), context, {
+				? await capturePayload(azureStream, getModel("azure", "gpt-4.1"), messages, {
 						apiKey: "test",
 						azureBaseUrl: "https://test.openai.azure.com",
-						onPayload,
 					})
-				: codexStream(getModel("openai-codex", "gpt-5.5"), context, { apiKey: codexToken, onPayload });
-	for await (const _ of events);
+				: await capturePayload(codexStream, getModel("openai-codex", "gpt-5.5"), messages, { apiKey: codexToken });
 	return payload as Payload;
-}
-
-function user(content: Extract<Message, { role: "user" }>["content"]): Message {
-	return { role: "user", content, timestamp: 1 };
 }
 
 const userItems = (payload: unknown) => (payload as Payload).input.filter((item) => item.role === "user");
 
-const readNote = "Read PDF file [application/pdf]: /tmp/x/report.pdf";
 const reportPart = {
 	type: "input_file",
 	filename: "report.pdf",
 	file_data: "data:application/pdf;base64,JVBERi0xLjc=",
 };
-const toolAttachments: Record<string, { path: string; mimeType: string; data: string }[]> = {
+const findForTools = findIn({
 	e1: [
 		{ path: "/tmp/x/report.pdf", mimeType: "application/pdf", data: "JVBERi0xLjc=" },
 		{ path: "/tmp/x/song.mp3", mimeType: "audio/mpeg", data: "//uQRAAAAAA=" },
 	],
 	u1: [attachments.e1[0]],
 	abc: [attachments.e1[0]],
-};
-const findForTools = (entryId: string, index: number) => toolAttachments[entryId]?.[index];
+});
+
+const faux = (content: Parameters<typeof fauxAssistantMessage>[0]) => fauxAssistantMessage(content);
 
 function readCall(id: string): Message[] {
-	return [fauxAssistantMessage([fauxToolCall("read", { path: "/tmp/x/report.pdf" }, { id })])];
+	return [faux([fauxToolCall("read", { path: "/tmp/x/report.pdf" }, { id })])];
 }
 
-function readResult(id: string, marker: string, images: { type: "image"; mimeType: string; data: string }[] = []): Message {
-	return {
-		role: "toolResult",
-		toolCallId: id,
-		toolName: "read",
-		content: [{ type: "text", text: readNote }, ...images, { type: "text", text: marker }],
-		isError: false,
-		timestamp: 1,
-	};
+function readResult(id: string, marker: string, images: { type: "image"; mimeType: string; data: string }[] = []) {
+	return toolResult(id, [text(pdfNote), ...images, text(marker)]);
 }
 
 for (const [api, provider] of [
@@ -92,14 +72,14 @@ for (const [api, provider] of [
 	["azure-openai-responses", "azure"],
 	["openai-codex-responses", "openai-codex"],
 ]) {
-	const adapter = findAdapter({ api, provider });
-	const rewrite = (payload: unknown) => adapter?.rewrite(payload, find);
+	const adapter = adapterFor({ api, provider });
+	const rewrite = (payload: unknown) => adapter.rewrite(payload, find);
 
 	test(`${api}: carries PDFs and no other types, in user messages and tool results`, () => {
 		const types = ["application/pdf", "audio/mpeg", "audio/wav", "video/mp4", "image/heic", "text/plain"];
 		for (const place of ["user", "toolResult"] as const) {
 			assert.deepEqual(
-				types.map((type) => adapter?.carries(type, place)),
+				types.map((type) => adapter.carries(type, place)),
 				[true, false, false, false, false, false],
 			);
 		}
@@ -188,75 +168,62 @@ for (const [api, provider] of [
 		assert.equal(rewrite(await payloadFor(api, [user("hello")])), undefined);
 	});
 
-	const toolRewrite = (payload: unknown) => adapter?.rewrite(payload, findForTools);
+	const toolRewrite = (payload: unknown) => adapter.rewrite(payload, findForTools);
 	const toolOutputs = (payload: unknown) => (payload as Payload).input.filter((item) => item.type === "function_call_output");
 
 	test(`${api}: places a PDF from a tool result as an input_file in the function call output`, async () => {
-		const payload = await payloadFor(api, [user("go"), ...readCall("t1"), readResult("t1", "[[pi-media:e1:0]]")]);
+		const payload = await payloadFor(api, readTurn(faux, readResult("t1", "[[pi-media:e1:0]]")));
 		assert.deepEqual(toolOutputs(payload), [
-			{ type: "function_call_output", call_id: "t1", output: `${readNote}\n[[pi-media:e1:0]]` },
+			{ type: "function_call_output", call_id: "t1", output: `${pdfNote}\n[[pi-media:e1:0]]` },
 		]);
 		assert.deepEqual(toolOutputs(toolRewrite(payload)), [
-			{ type: "function_call_output", call_id: "t1", output: [{ type: "input_text", text: readNote }, reportPart] },
+			{ type: "function_call_output", call_id: "t1", output: [{ type: "input_text", text: pdfNote }, reportPart] },
 		]);
 	});
 
 	test(`${api}: places a PDF from a tool result with images after the note text`, async () => {
-		const payload = await payloadFor(api, [
-			user("go"),
-			...readCall("t1"),
-			readResult("t1", "[[pi-media:e1:0]]", [{ type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" }]),
-		]);
+		const payload = await payloadFor(
+			api,
+			readTurn(faux, readResult("t1", "[[pi-media:e1:0]]", [{ type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" }])),
+		);
 		assert.deepEqual(toolOutputs(toolRewrite(payload)), [
 			{
 				type: "function_call_output",
 				call_id: "t1",
-				output: [{ type: "input_text", text: readNote }, reportPart, pngPart],
+				output: [{ type: "input_text", text: pdfNote }, reportPart, pngPart],
 			},
 		]);
 	});
 
 	// pi-ai builds this item for tools with a grammar input, which the read tool does not have.
 	test(`${api}: places a PDF in a custom tool call output`, () => {
-		const payload = { input: [{ type: "custom_tool_call_output", call_id: "t1", output: `${readNote}\n[[pi-media:e1:0]]` }] };
+		const payload = { input: [{ type: "custom_tool_call_output", call_id: "t1", output: `${pdfNote}\n[[pi-media:e1:0]]` }] };
 		assert.deepEqual(toolRewrite(payload), {
-			input: [{ type: "custom_tool_call_output", call_id: "t1", output: [{ type: "input_text", text: readNote }, reportPart] }],
+			input: [{ type: "custom_tool_call_output", call_id: "t1", output: [{ type: "input_text", text: pdfNote }, reportPart] }],
 		});
 	});
 
 	test(`${api}: removes tool result markers of other types and missing attachments, and keeps the note`, async () => {
 		for (const marker of ["[[pi-media:e1:1]]", "[[pi-media:e1:9]]", "[[pi-media:gone:0]]"]) {
-			const payload = await payloadFor(api, [user("go"), ...readCall("t1"), readResult("t1", marker)]);
+			const payload = await payloadFor(api, readTurn(faux, readResult("t1", marker)));
 			assert.deepEqual(toolOutputs(toolRewrite(payload)), [
-				{ type: "function_call_output", call_id: "t1", output: [{ type: "input_text", text: readNote }] },
+				{ type: "function_call_output", call_id: "t1", output: [{ type: "input_text", text: pdfNote }] },
 			]);
 		}
 	});
 
-	const textResult = (id: string, ...texts: string[]): Message => ({
-		role: "toolResult",
-		toolCallId: id,
-		toolName: "read",
-		content: texts.map((text) => ({ type: "text", text })),
-		isError: false,
-		timestamp: 1,
-	});
+	const textResult = (id: string, ...texts: string[]) => toolResult(id, texts.map(text));
 
 	test(`${api}: leaves tool result text that only contains a marker`, async () => {
-		const payload = await payloadFor(api, [
-			user("go"),
-			...readCall("t1"),
-			textResult("t1", "file says [[pi-media:abc:0]] literal"),
-		]);
+		const payload = await payloadFor(api, readTurn(faux, textResult("t1", "file says [[pi-media:abc:0]] literal")));
 		assert.equal(toolRewrite(payload), undefined);
 	});
 
 	test(`${api}: takes only the marker lines at the end of a tool result`, async () => {
-		const payload = await payloadFor(api, [
-			user("go"),
-			...readCall("t1"),
-			textResult("t1", "first\n[[pi-media:abc:0]]\nlast", "[[pi-media:e1:0]]"),
-		]);
+		const payload = await payloadFor(
+			api,
+			readTurn(faux, textResult("t1", "first\n[[pi-media:abc:0]]\nlast", "[[pi-media:e1:0]]")),
+		);
 		assert.deepEqual(toolOutputs(toolRewrite(payload)), [
 			{
 				type: "function_call_output",
@@ -272,18 +239,11 @@ for (const [api, provider] of [
 			...readCall("t1"),
 			readResult("t1", "[[pi-media:e1:0]]"),
 			...readCall("t2"),
-			{
-				role: "toolResult",
-				toolCallId: "t2",
-				toolName: "read",
-				content: [{ type: "text", text: "line 1" }],
-				isError: false,
-				timestamp: 1,
-			},
+			textResult("t2", "line 1"),
 		]);
 		const result = toolRewrite(payload) as Payload;
 		assert.deepEqual(toolOutputs(result), [
-			{ type: "function_call_output", call_id: "t1", output: [{ type: "input_text", text: readNote }, reportPart] },
+			{ type: "function_call_output", call_id: "t1", output: [{ type: "input_text", text: pdfNote }, reportPart] },
 			{ type: "function_call_output", call_id: "t2", output: "line 1" },
 		]);
 		const unchanged = payload.input.filter((item) => item.call_id !== "t1" || item.type !== "function_call_output");
@@ -302,10 +262,10 @@ for (const [api, provider] of [
 			...readCall("t1"),
 			readResult("t1", "[[pi-media:e1:0]]"),
 		]);
-		const result = toolRewrite(payload);
+		const result = assertPureRewrite(adapter, payload, findForTools);
 		assert.deepEqual(userItems(result), [{ role: "user", content: [{ type: "input_text", text: "see @doc.pdf" }, pdfPart] }]);
 		assert.deepEqual(toolOutputs(result), [
-			{ type: "function_call_output", call_id: "t1", output: [{ type: "input_text", text: readNote }, reportPart] },
+			{ type: "function_call_output", call_id: "t1", output: [{ type: "input_text", text: pdfNote }, reportPart] },
 		]);
 	});
 

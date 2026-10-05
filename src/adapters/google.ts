@@ -1,30 +1,29 @@
 import { takeMarkers } from "../marker.ts";
-import type { Attachment } from "../media-entry.ts";
 import type { FindAttachment } from "./adapter.ts";
+import { type Build, builderIn, carriesBy } from "./part-for.ts";
 import { registerAdapter } from "./registry.ts";
-import { type PayloadShape, rewriteUserMessages } from "./user-messages.ts";
+import { type HolderList, isRecord, rewriteHolders } from "./text-holders.ts";
 
 type Content = { role?: unknown; parts?: unknown };
 type FunctionResponse = { response?: Record<string, unknown>; parts?: unknown[] };
+type File = { mimeType: string; part: unknown };
 
 // Gemini and Vertex AI share one request format: pi-ai builds both with the same converter.
-const shape: PayloadShape = {
-	messages: "contents",
-	isUser: (content) => content.role === "user",
+const userContents: HolderList = {
+	list: "contents",
+	selects: (content) => content.role === "user",
 	content: "parts",
-	textOf: (part) => {
-		const { text } = (part ?? {}) as { text?: unknown };
-		return typeof text === "string" ? text : undefined;
-	},
+	textOf: (part) => (isRecord(part) && typeof part.text === "string" ? part.text : undefined),
 	textNode: (text) => ({ text }),
 };
 
-function carries(mimeType: string) {
-	return mimeType.startsWith("audio/") || mimeType.startsWith("video/") || mimeType === "application/pdf";
-}
+const inlineData: Build = ({ data, mimeType }) => ({ inlineData: { mimeType, data } });
 
-function inlineData({ data, mimeType }: Attachment) {
-	return { inlineData: { mimeType, data } };
+// Gemini takes audio, video and PDFs as inlineData parts, in user turns and for tool results.
+function partFor(mimeType: string) {
+	return mimeType.startsWith("audio/") || mimeType.startsWith("video/") || mimeType === "application/pdf"
+		? inlineData
+		: undefined;
 }
 
 // The same rule as pi-ai's `supportsMultimodalFunctionResponse`: Gemini 3 and later, and models that are not Gemini,
@@ -37,18 +36,21 @@ function takesFunctionResponseParts(modelId: unknown) {
 }
 
 // Vertex AI accepts images, PDF and plain text in `functionResponse.parts`. Audio and video go in a user turn.
-function fitsFunctionResponse(attachment: Attachment) {
-	return attachment.mimeType === "application/pdf";
+function fitsFunctionResponse(file: File) {
+	return file.mimeType === "application/pdf";
 }
 
-// pi-ai joins the text blocks of a tool result with "\n". Returns the text without its markers, and the carried
-// attachments of these markers.
+const toolResultPart = builderIn(partFor, "toolResult");
+
+// pi-ai joins the text blocks of a tool result with "\n". Returns the text without its markers, and the parts of the
+// carried attachments of these markers.
 function takeMarkerLines(text: string, attachment: FindAttachment) {
 	const taken = takeMarkers(text, true);
 	if (!taken) return undefined;
-	const files = taken.markers.flatMap(({ entryId, index }) => {
+	const files = taken.markers.flatMap(({ entryId, index }): File[] => {
 		const found = attachment(entryId, index);
-		return found && carries(found.mimeType) ? [found] : [];
+		const part = found && toolResultPart(found);
+		return found && part !== undefined ? [{ mimeType: found.mimeType, part }] : [];
 	});
 	return { text: taken.text, files };
 }
@@ -68,7 +70,7 @@ function rewriteFunctionResponse(part: unknown, attachment: FindAttachment, take
 			functionResponse: {
 				...functionResponse,
 				response: { ...response, [key]: taken.text },
-				...(nested.length > 0 && { parts: [...(functionResponse?.parts ?? []), ...nested.map(inlineData)] }),
+				...(nested.length > 0 && { parts: [...(functionResponse?.parts ?? []), ...nested.map((file) => file.part)] }),
 			},
 		},
 		files: taken.files.filter((file) => !nested.includes(file)),
@@ -89,11 +91,11 @@ function rewriteFunctionResponseTurn(content: unknown, attachment: FindAttachmen
 // pi-ai adds tool result images to older models in a user turn right after the function responses.
 function isToolResultImageTurn(content: unknown) {
 	const { role, parts } = (content ?? {}) as Content;
-	return role === "user" && Array.isArray(parts) && shape.textOf(parts[0]) === "Tool result image:";
+	return role === "user" && Array.isArray(parts) && userContents.textOf(parts[0]) === "Tool result image:";
 }
 
-function fileParts(files: Attachment[]) {
-	return [{ text: "Tool result file:" }, ...files.map(inlineData)];
+function fileParts(files: File[]) {
+	return [{ text: "Tool result file:" }, ...files.map((file) => file.part)];
 }
 
 function rewriteToolResults(contents: unknown[], attachment: FindAttachment, takesParts: boolean) {
@@ -112,14 +114,13 @@ function rewriteToolResults(contents: unknown[], attachment: FindAttachment, tak
 }
 
 function rewrite(payload: unknown, attachment: FindAttachment) {
-	const users = rewriteUserMessages(payload, shape, attachment, (file) =>
-		carries(file.mimeType) ? inlineData(file) : undefined,
-	);
-	const { contents, model } = (users ?? payload ?? {}) as { contents?: unknown; model?: unknown };
-	const rewritten = Array.isArray(contents) && rewriteToolResults(contents, attachment, takesFunctionResponseParts(model));
-	return rewritten ? { ...(users ?? (payload as object)), contents: rewritten } : users;
+	const users = rewriteHolders(payload, userContents, attachment, builderIn(partFor, "user"));
+	const current = users ?? payload;
+	if (!isRecord(current) || !Array.isArray(current.contents)) return users;
+	const contents = rewriteToolResults(current.contents, attachment, takesFunctionResponseParts(current.model));
+	return contents ? { ...current, contents } : users;
 }
 
 for (const api of ["google-generative-ai", "google-vertex"]) {
-	registerAdapter({ api, carries, rewrite });
+	registerAdapter({ api, carries: carriesBy(partFor), rewrite });
 }

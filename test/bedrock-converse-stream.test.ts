@@ -1,25 +1,25 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type AssistantMessage, type Message, type Model, normalizeContext } from "@earendil-works/pi-ai";
+import type { Message, Model } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/bedrock-converse-stream";
 import "../src/adapters/bedrock-converse-stream.ts";
-import { findAdapter } from "../src/adapters/registry.ts";
+import {
+	adapterFor,
+	assertPureRewrite,
+	assistantOf,
+	capturePayload,
+	find,
+	findIn,
+	pdfNote,
+	readTurn,
+	text,
+	readResult as toolResultOf,
+	user as userOf,
+} from "./pi-payload.ts";
 
-const adapter = findAdapter({ api: "bedrock-converse-stream", provider: "amazon-bedrock" });
-assert.ok(adapter);
+const adapter = adapterFor({ api: "bedrock-converse-stream", provider: "amazon-bedrock" });
 
 const pdf = "JVBERi0xLjQ=";
-const attachments: Record<string, { path: string; mimeType: string; data: string }[]> = {
-	e1: [
-		{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: pdf },
-		{ path: "/gone/a.mp3", mimeType: "audio/mpeg", data: "//uQRAAAAAA=" },
-		{ path: "/gone/clip.mp4", mimeType: "video/mp4", data: "AAAAGGZ0eXA=" },
-		{ path: "/gone/shot.heic", mimeType: "image/heic", data: "AAAA" },
-		{ path: "/other/doc.pdf", mimeType: "application/pdf", data: pdf },
-	],
-	abc: [{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: pdf }],
-};
-const find = (entryId: string, index: number) => attachments[entryId]?.[index];
 const rewrite = (payload: unknown) => adapter.rewrite(payload, find);
 
 const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
@@ -41,50 +41,15 @@ const model: Model<"bedrock-converse-stream"> = {
 	maxTokens: 1000,
 };
 
-// Builds the payload with pi-ai's own converter and stops before any network request.
 // The Claude model makes pi-ai add a cache point to the last user message.
-async function payloadFor(messages: Message[]) {
-	let payload: unknown;
-	const events = stream(model, normalizeContext({ messages }), {
-		apiKey: "bedrock-test",
-		onPayload: (params) => {
-			payload = params;
-			throw new Error("stop");
-		},
-	});
-	for await (const _ of events);
-	assert.ok(payload);
-	return payload as { messages: unknown[] };
-}
+const payloadFor = async (messages: Message[]) =>
+	(await capturePayload(stream, model, messages, { apiKey: "bedrock-test" })) as { messages: unknown[] };
 
-const user = (...texts: string[]): Message => ({
-	role: "user",
-	content: texts.map((text) => ({ type: "text", text })),
-	timestamp: 1,
-});
+const user = (...texts: string[]) => userOf(texts.map(text));
 
-const assistant = (content: AssistantMessage["content"], stopReason: AssistantMessage["stopReason"] = "stop"): Message => ({
-	role: "assistant",
-	content,
-	api: "bedrock-converse-stream",
-	provider: "amazon-bedrock",
-	model: model.id,
-	usage: {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	},
-	stopReason,
-	timestamp: 1,
-});
+const assistant = assistantOf(model);
 
-const single =
-	(mimeType: string, path = "/gone/file") =>
-	(entryId: string, index: number) =>
-		entryId === "x" && index === 0 ? { path, mimeType, data: pdf } : undefined;
+const single = (mimeType: string, path = "/gone/file") => findIn({ x: [{ path, mimeType, data: pdf }] });
 const blockFor = (mimeType: string, path?: string) => {
 	const result = adapter.rewrite(
 		{ messages: [{ role: "user", content: [{ text: "[[pi-media:x:0]]" }] }] },
@@ -226,24 +191,10 @@ test("carries PDFs and video in tool results, and not audio", () => {
 	);
 });
 
-const readCall = (id: string): Message =>
-	assistant([{ type: "toolCall", id, name: "read", arguments: { path: "/tmp/x/report.pdf" } }], "toolUse");
+const readResult = (id: string, ...texts: string[]) => toolResultOf(id, texts.map(text));
 
-const readResult = (id: string, ...texts: string[]): Message => ({
-	role: "toolResult",
-	toolCallId: id,
-	toolName: "read",
-	content: texts.map((text) => ({ type: "text", text })),
-	isError: false,
-	timestamp: 1,
-});
-
-const pdfNote = "Read PDF file [application/pdf]: /tmp/x/report.pdf";
-const readPayload = () => payloadFor([user("read it"), readCall("t1"), readResult("t1", pdfNote, "[[pi-media:e1:0]]")]);
-const readOf =
-	(mimeType: string, path = "/tmp/x/report.pdf") =>
-	(entryId: string, index: number) =>
-		entryId === "e1" && index === 0 ? { path, mimeType, data: pdf } : undefined;
+const readPayload = () => payloadFor(readTurn(assistant, readResult("t1", pdfNote, "[[pi-media:e1:0]]")));
+const readOf = (mimeType: string, path = "/tmp/x/report.pdf") => findIn({ e1: [{ path, mimeType, data: pdf }] });
 const toolResult = (toolUseId: string, ...content: unknown[]) => ({ toolResult: { toolUseId, content, status: "success" } });
 
 test("replaces a tool result marker with a document block and keeps the cache point last", async () => {
@@ -302,8 +253,7 @@ test("changes only the tool result with media when two tool results come in a ro
 test("names documents in user messages and tool results in message order, the same way each time", async () => {
 	const payload = await payloadFor([
 		user("see /gone/doc.pdf", "[[pi-media:e1:0]]"),
-		readCall("t1"),
-		readResult("t1", "Read PDF file [application/pdf]: /gone/doc.pdf", "[[pi-media:e1:0]]"),
+		...readTurn(assistant, readResult("t1", "Read PDF file [application/pdf]: /gone/doc.pdf", "[[pi-media:e1:0]]")).slice(1),
 		assistant([{ type: "text", text: "ok" }]),
 		user("and /other/doc.pdf", "[[pi-media:e1:4]]"),
 	]);
@@ -317,13 +267,15 @@ test("names documents in user messages and tool results in message order, the sa
 		{ role: "assistant", content: [{ text: "ok" }] },
 		{ role: "user", content: [{ text: "and /other/doc.pdf" }, docBlock("doc (3)"), cachePoint] },
 	];
-	assert.deepEqual((rewrite(payload) as typeof payload).messages, expected);
-	assert.deepEqual((rewrite(payload) as typeof payload).messages, expected);
+	assert.deepEqual((assertPureRewrite(adapter, payload, find) as typeof payload).messages, expected);
 });
 
 test("leaves user and tool result text that only contains a marker", async () => {
 	const probe = "file says [[pi-media:abc:0]] literal";
-	const payload = await payloadFor([user(probe, "see\n[[pi-media:abc:0]]"), readCall("t1"), readResult("t1", probe)]);
+	const payload = await payloadFor([
+		user(probe, "see\n[[pi-media:abc:0]]"),
+		...readTurn(assistant, readResult("t1", probe)).slice(1),
+	]);
 	assert.equal(rewrite(payload), undefined);
 });
 
