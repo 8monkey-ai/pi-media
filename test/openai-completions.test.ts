@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { type Model, normalizeContext } from "@earendil-works/pi-ai";
+import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import "../src/adapters/openai-completions.ts";
 import { findAdapter } from "../src/adapters/registry.ts";
 
@@ -10,81 +12,141 @@ const attachments: Record<string, { path: string; mimeType: string; data: string
 	e1: [
 		{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" },
 		{ path: "/gone/a.mp3", mimeType: "audio/mpeg", data: "//uQRAAAAAA=" },
+		{ path: "/gone/voice.wav", mimeType: "audio/wav", data: "UklGRiQAAAA=" },
 		{ path: "/gone/clip.mp4", mimeType: "video/mp4", data: "AAAAGGZ0eXA=" },
+		{ path: "/gone/song.ogg", mimeType: "audio/ogg", data: "T2dnUwAC" },
 		{ path: "/gone/shot.heic", mimeType: "image/heic", data: "AAAA" },
 	],
 };
 const find = (entryId: string, index: number) => attachments[entryId]?.[index];
 const rewrite = (payload: unknown) => adapter.rewrite(payload, find);
 
-const pdfPart = { type: "file", file: { data: "JVBERi0xLjQ=", media_type: "application/pdf" } };
-const mp3Part = { type: "file", file: { data: "//uQRAAAAAA=", media_type: "audio/mpeg" } };
-const mp4Part = { type: "file", file: { data: "AAAAGGZ0eXA=", media_type: "video/mp4" } };
+const pdfPart = { type: "file", file: { filename: "doc.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } };
+const mp3Part = { type: "input_audio", input_audio: { data: "//uQRAAAAAA=", format: "mp3" } };
+const wavPart = { type: "input_audio", input_audio: { data: "UklGRiQAAAA=", format: "wav" } };
 
-test("carries audio, video and PDFs, and no other types", () => {
+type UserContent = string | ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[];
+
+// Builds the request body with pi-ai's own converter and stops before any network call.
+async function piPayload(users: UserContent[], { provider = "openai", id = "gpt-4o" } = {}) {
+	const model: Model<"openai-completions"> = {
+		id,
+		name: id,
+		api: "openai-completions",
+		provider,
+		baseUrl: "http://127.0.0.1:9",
+		reasoning: false,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1000,
+		maxTokens: 100,
+	};
+	const controller = new AbortController();
+	let payload: unknown;
+	const events = stream(
+		model,
+		normalizeContext({ messages: users.map((content, index) => ({ role: "user", content, timestamp: index })) }),
+		{
+			apiKey: "test",
+			signal: controller.signal,
+			onPayload: (params) => {
+				payload = structuredClone(params);
+				controller.abort();
+				return undefined;
+			},
+		},
+	);
+	for await (const _ of events);
+	return payload as { messages: { content: unknown }[] };
+}
+
+const marker = (index: number) => ({ type: "text" as const, text: `[[pi-media:e1:${index}]]` });
+const contentOf = (payload: unknown) => (payload as { messages: { content: unknown }[] }).messages.map((m) => m.content);
+
+test("carries PDFs, wav and mp3, and no other types", () => {
 	assert.deepEqual(
-		["audio/wav", "video/webm", "application/pdf", "image/heic", "text/plain"].map((type) => adapter.carries(type)),
-		[true, true, true, false, false],
+		[
+			"application/pdf",
+			"audio/wav",
+			"audio/mpeg",
+			"video/mp4",
+			"audio/ogg",
+			"audio/x-wav",
+			"image/heic",
+			"text/plain",
+			"constructor",
+		].map((type) => adapter.carries(type)),
+		[true, true, true, false, false, false, false, false, false],
 	);
 });
 
-test("replaces marker blocks in array content with file parts", () => {
-	const payload = {
-		model: "m",
-		messages: [
-			{
-				role: "user",
-				content: [
-					{ type: "text", text: "see @doc.pdf" },
-					{ type: "image_url", image_url: { url: "data:image/png;base64,xx" } },
-					{ type: "text", text: "[[pi-media:e1:0]]" },
-					{ type: "text", text: "[[pi-media:e1:1]]" },
-					{ type: "text", text: "[[pi-media:e1:2]]" },
-				],
-			},
+test("replaces marker blocks with file and input_audio parts and keeps images and typed text", async () => {
+	const payload = await piPayload([
+		[
+			{ type: "text", text: "see @doc.pdf" },
+			{ type: "image", data: "xx", mimeType: "image/png" },
+			marker(0),
+			marker(1),
+			marker(2),
 		],
-	};
-	assert.deepEqual(rewrite(payload), {
-		model: "m",
-		messages: [
-			{
-				role: "user",
-				content: [
-					{ type: "text", text: "see @doc.pdf" },
-					{ type: "image_url", image_url: { url: "data:image/png;base64,xx" } },
-					pdfPart,
-					mp3Part,
-					mp4Part,
-				],
-			},
+	]);
+	assert.deepEqual(contentOf(rewrite(payload)), [
+		[
+			{ type: "text", text: "see @doc.pdf" },
+			{ type: "image_url", image_url: { url: "data:image/png;base64,xx" } },
+			pdfPart,
+			mp3Part,
+			wavPart,
 		],
-	});
+	]);
 });
 
-test("splits string content around a marker", () => {
-	assert.deepEqual(rewrite({ messages: [{ role: "user", content: "read this\n[[pi-media:e1:0]] then that" }] }), {
-		messages: [
-			{
-				role: "user",
-				content: [{ type: "text", text: "read this" }, pdfPart, { type: "text", text: "then that" }],
-			},
+test("splits string content around a marker", async () => {
+	const payload = await piPayload(["read this\n[[pi-media:e1:0]] then that"]);
+	assert.deepEqual(contentOf(rewrite(payload)), [
+		[{ type: "text", text: "read this" }, pdfPart, { type: "text", text: "then that" }],
+	]);
+});
+
+test("removes markers of video, other audio, other types and missing attachments, and keeps the typed text", async () => {
+	const payload = await piPayload([
+		[{ type: "text", text: "hi" }, { type: "text", text: "[[pi-media:gone:0]]" }, marker(9), marker(3), marker(4), marker(5)],
+	]);
+	assert.deepEqual(contentOf(rewrite(payload)), [[{ type: "text", text: "hi" }]]);
+});
+
+test("keeps the cache marker on the last text part when the marker block that held it is replaced", async () => {
+	const payload = await piPayload(
+		[
+			[{ type: "text", text: "earlier @a.mp3" }, marker(1)],
+			[{ type: "text", text: "see @doc.pdf" }, marker(0)],
 		],
-	});
+		{
+			provider: "openrouter",
+			id: "anthropic/claude-sonnet-4",
+		},
+	);
+	assert.deepEqual(contentOf(payload)[1], [
+		{ type: "text", text: "see @doc.pdf" },
+		{ type: "text", text: "[[pi-media:e1:0]]", cache_control: { type: "ephemeral" } },
+	]);
+	assert.deepEqual(contentOf(rewrite(payload)), [
+		[{ type: "text", text: "earlier @a.mp3" }, mp3Part],
+		[{ type: "text", text: "see @doc.pdf", cache_control: { type: "ephemeral" } }, pdfPart],
+	]);
 });
 
-test("removes a marker whose attachment is missing or of a type it does not carry", () => {
-	const content = [
-		{ type: "text", text: "hi" },
-		{ type: "text", text: "[[pi-media:gone:0]]" },
-		{ type: "text", text: "[[pi-media:e1:7]]" },
-		{ type: "text", text: "[[pi-media:e1:3]]" },
-	];
-	assert.deepEqual(rewrite({ messages: [{ role: "user", content }] }), {
-		messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+test("keeps the cache marker of string content on the text before the marker", async () => {
+	const payload = await piPayload(["read @doc.pdf\n[[pi-media:e1:0]]"], {
+		provider: "openrouter",
+		id: "anthropic/claude-sonnet-4",
 	});
+	assert.deepEqual(contentOf(rewrite(payload)), [
+		[{ type: "text", text: "read @doc.pdf", cache_control: { type: "ephemeral" } }, pdfPart],
+	]);
 });
 
-test("leaves markers in assistant and tool messages", () => {
+test("leaves markers in assistant, tool and system messages", () => {
 	const payload = {
 		messages: [
 			{ role: "assistant", content: "I saw [[pi-media:e1:0]]" },

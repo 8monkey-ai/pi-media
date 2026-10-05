@@ -76,7 +76,7 @@ On each request, pi-media looks at the API of the model and formats the stored f
 
 | API | Kinds | Part in the request |
 |---|---|---|
-| OpenAI-compatible Chat Completions (`openai-completions`) | Audio, video, PDF | `{"type":"file","file":{"data":"<base64>","media_type":"<mime>"}}` |
+| OpenAI-compatible Chat Completions (`openai-completions`) | PDF, wav and mp3 audio | `{"type":"file","file":{"filename":"<name>","file_data":"data:application/pdf;base64,<base64>"}}` for PDFs, `{"type":"input_audio","input_audio":{"data":"<base64>","format":"wav"}}` for audio (`wav` or `mp3`) |
 | Gemini API (`google-generative-ai`) and Vertex AI (`google-vertex`) | Audio, video, PDF | `{"inlineData":{"mimeType":"<mime>","data":"<base64>"}}` |
 | Anthropic Messages (`anthropic-messages`) | PDF | `{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"<base64>"}}` |
 | Amazon Bedrock Converse (`bedrock-converse-stream`) | PDF, video, audio | `document` (format `pdf`), `video` and `audio` blocks with the raw bytes |
@@ -84,7 +84,7 @@ On each request, pi-media looks at the API of the model and formats the stored f
 
 For all other APIs, for example Mistral and the OpenAI Responses API, the model gets your message with the path as text, and no file.
 
-A Chat Completions provider that does not accept the `file` part can return an error. The error shows in the UI unchanged.
+Chat Completions gets video, and audio other than wav and mp3, as path text. A provider that does not accept these parts returns an error. The error shows in the UI unchanged.
 
 Virtual models use the API `pi-virtual`, so pi-media cannot find the API of the model that answers. A virtual model gets the path as text, and no file. This is a known limit.
 

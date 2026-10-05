@@ -8,7 +8,7 @@ import { startSession } from "./session-harness.ts";
 
 // Which user messages a pi-media entry links to, across normal, queued, cleared and branched prompts.
 
-const MP3_PART = { type: "file", file: { data: "//uQRAAAAAA=", media_type: "audio/mpeg" } };
+const MP3_PART = { type: "input_audio", input_audio: { data: "//uQRAAAAAA=", format: "mp3" } };
 
 function user(text: string, files = 0) {
 	return { role: "user", content: [{ type: "text", text }, ...Array.from({ length: files }, () => MP3_PART)] };

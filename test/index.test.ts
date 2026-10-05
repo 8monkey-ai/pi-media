@@ -8,7 +8,7 @@ import extension from "../src/index.ts";
 import { MP3_BYTES, PNG_BYTES, WAV_BYTES } from "./fixtures.ts";
 import { startSession } from "./session-harness.ts";
 
-const MP3_PART = { type: "file", file: { data: "//uQRAAAAAA=", media_type: "audio/mpeg" } };
+const MP3_PART = { type: "input_audio", input_audio: { data: "//uQRAAAAAA=", format: "mp3" } };
 const PNG_IMAGE = { type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ", mimeType: "image/png" };
 
 // Runs after pi-media and records the input that pi-media passes on.
@@ -45,7 +45,7 @@ test("stores a PDF in a pi-media entry and keeps the typed text in the user mess
 	);
 });
 
-test("marks the request copy of the user message and sends the attachment as a file part", async () => {
+test("marks the request copy of the user message and sends the attachment as an audio part", async () => {
 	const { session, requests, settle } = await startSession([extension], { files: { "a.mp3": MP3_BYTES } });
 	await settle(session.prompt("listen to @a.mp3"));
 	const entry = session.sessionManager.getBranch().find((candidate) => candidate.type === "custom");
