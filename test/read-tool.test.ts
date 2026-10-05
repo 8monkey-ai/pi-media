@@ -12,7 +12,7 @@ function context(cwd: string) {
 }
 
 async function readWithMedia(dir: string, path: string, autoResizeImages?: boolean) {
-	return createMediaReadTool(() => autoResizeImages).execute("call-1", { path }, undefined, undefined, context(dir));
+	return createMediaReadTool(() => autoResizeImages, 20971520).execute("call-1", { path }, undefined, undefined, context(dir));
 }
 
 async function readWithPi(dir: string, path: string, autoResizeImages?: boolean) {
@@ -85,7 +85,7 @@ test("strips a leading @ from the path, as pi's read tool does", async () => {
 
 test("passes offset and limit to pi's read tool", async () => {
 	const dir = await fixtureDir({ "notes.md": "one\ntwo\nthree" });
-	const result = await createMediaReadTool(() => undefined).execute(
+	const result = await createMediaReadTool(() => undefined, 20971520).execute(
 		"call-1",
 		{ path: "notes.md", offset: 2, limit: 1 },
 		undefined,
@@ -103,5 +103,5 @@ test("fails for a missing file with the error of pi's read tool", async () => {
 });
 
 test("tells the model that the tool also reads audio, video and PDF files", () => {
-	assert.match(createMediaReadTool(() => undefined).description, /Also reads audio, video and PDF files\./);
+	assert.match(createMediaReadTool(() => undefined, 20971520).description, /Also reads audio, video and PDF files\./);
 });

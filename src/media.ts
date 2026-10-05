@@ -7,14 +7,10 @@ import { resolveExistingPath } from "./resolve-path.ts";
 
 type ImageContent = NonNullable<InputEvent["images"]>[number];
 
-// ponytail: files above this are left as plain paths — base64 in memory would risk an OOM.
-// Raise it, or upload and send a URL instead, if large video matters.
-const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-
-async function isAttachable(path: string) {
+async function isAttachable(path: string, maxBytes: number) {
 	try {
 		const stats = await stat(path);
-		return stats.isFile() && stats.size > 0 && stats.size <= MAX_ATTACHMENT_BYTES;
+		return stats.isFile() && stats.size > 0 && stats.size <= maxBytes;
 	} catch {
 		return false;
 	}
@@ -32,10 +28,10 @@ async function detectType(path: string) {
 	return mimeType && isMediaType(mimeType) ? { image: false, mimeType } : undefined;
 }
 
-// Finds the file that a path names if pi-media attaches it: an existing file within the size cap, of an image or media type.
-export async function findMediaFile(mention: string, cwd: string) {
+// Finds the file that a path names if pi-media attaches it: an existing file of at most `maxBytes`, of an image or media type.
+export async function findMediaFile(mention: string, cwd: string, maxBytes: number) {
 	const path = await resolveExistingPath(mention, cwd);
-	if (!path || !(await isAttachable(path))) return undefined;
+	if (!path || !(await isAttachable(path, maxBytes))) return undefined;
 	const type = await detectType(path).catch(() => undefined);
 	return type && { path, ...type };
 }
@@ -44,8 +40,8 @@ export async function readAttachment(path: string, mimeType: string): Promise<At
 	return { path, mimeType, data: (await readFile(path)).toString("base64") };
 }
 
-async function attach(mention: string, cwd: string): Promise<ImageContent | Attachment | undefined> {
-	const file = await findMediaFile(mention, cwd);
+async function attach(mention: string, cwd: string, maxBytes: number): Promise<ImageContent | Attachment | undefined> {
+	const file = await findMediaFile(mention, cwd, maxBytes);
 	if (!file) return undefined;
 	try {
 		const attachment = await readAttachment(file.path, file.mimeType);
@@ -55,13 +51,13 @@ async function attach(mention: string, cwd: string): Promise<ImageContent | Atta
 	}
 }
 
-export async function findLocalMedia(text: string, cwd: string) {
+export async function findLocalMedia(text: string, cwd: string, maxBytes: number) {
 	let attachedEnd = 0;
 	const images: ImageContent[] = [];
 	const attachments: Attachment[] = [];
 	for (const { start, end, path } of findPathCandidates(text)) {
 		if (start < attachedEnd) continue;
-		const found = await attach(path, cwd);
+		const found = await attach(path, cwd, maxBytes);
 		if (!found) continue;
 		attachedEnd = end;
 		if ("type" in found) images.push(found);

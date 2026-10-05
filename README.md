@@ -104,7 +104,7 @@ OpenRouter models accept only some of these formats. If a model does not accept 
 
 pi-media replaces pi's `read` tool. With it, the model can read audio, video and PDF files, and also text files and images.
 
-- The tool finds the file with the same path rules and the same 20 MB limit as for paths in your message. It finds the file type from the first bytes of the file.
+- The tool finds the file with the same path rules and the same size limit, `maxAttachmentBytes`, as for paths in your message. It gives a larger file to pi's own `read` tool. It finds the file type from the first bytes of the file.
 - For an audio, video or PDF file, the tool result has a short note, for example `Read PDF file [application/pdf]: /Users/me/report.pdf`. pi-media stores the bytes of the file in the session with the tool result. Later turns and resumed sessions send the stored bytes.
 - pi-media gives all other files, images too, to pi's own `read` tool. The result is the same as without pi-media.
 
@@ -133,11 +133,29 @@ If another extension also replaces `read`, it conflicts with pi-media. Pi uses t
 ## Limits
 
 - A path stays as you typed it if it does not point to an existing, non-empty file of a supported type. Directories, missing files, empty files and other file types stay as text.
-- pi-media does not attach files larger than 20 MB. The path stays as text.
+- pi-media does not attach files larger than `maxAttachmentBytes` (20 MB by default, see [Settings](#settings)). The path stays as text.
 - A path without quotes or backslashes ends at the first space if its line has other text. In `see /Users/me/My File.png`, pi-media looks for `/Users/me/My`, and the text stays as you typed it.
 - pi-media finds the stored file of a message by its text. Audio, video and PDFs do not attach to a message that starts with a skill (`/skill:name`) or a prompt template (`/name`), because pi replaces the text of these messages.
 - A message gets the files of one stored entry at most. If you clear the message queue, or edit a message in the session tree, the stored files of that message stay unused. A later message with the same text that attaches no files of its own gets these files.
 - Errors from the provider, for example an unsupported media kind or a request that is too large, show in the UI unchanged.
+
+## Settings
+
+pi-media reads its settings from the file `pi-media.json` in the pi agent directory. This is `~/.pi/agent/pi-media.json`, or `$PI_CODING_AGENT_DIR/pi-media.json` if you set `PI_CODING_AGENT_DIR`. Pi has no settings section for extensions, so pi-media uses a file of its own. If the file or a setting is missing, pi-media uses the default.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `maxAttachmentBytes` | `20971520` (20 MB) | The size of the largest file that pi-media attaches, in bytes. A larger file stays as text in your message, and the `read` tool gives it to pi's own `read` tool. pi-media keeps each attached file in memory, so a larger value uses more memory. |
+
+Example, for a limit of 50 MB:
+
+```json
+{
+  "maxAttachmentBytes": 52428800
+}
+```
+
+pi-media reads the file when pi loads extensions. After you change the file, run `/reload` or start pi again. pi-media ignores keys that it does not know. If the file is not valid JSON, or `maxAttachmentBytes` is not a positive integer, pi-media does not load, and pi shows an error with the path of the file.
 
 ## Requirements
 
