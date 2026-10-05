@@ -23,6 +23,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test",
     "typecheck": "tsc --noEmit",
@@ -30,11 +33,15 @@
     "lint": "biome lint .",
     "check": "biome check . && tsc --noEmit && node --test"
   },
+  "dependencies": {
+    "file-type": "^22.1.1"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^22",
     "typescript": "^5"

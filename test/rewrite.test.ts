@@ -1,77 +1,80 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "node:test";
-import { makeMarker } from "../src/media.ts";
 import { rewritePayload } from "../src/rewrite.ts";
 
-const dir = await mkdtemp(join(tmpdir(), "pi-media-rewrite-"));
-const pdfPath = join(dir, "doc.pdf");
-await writeFile(pdfPath, "%PDF-1.4");
-
-const marker = makeMarker(pdfPath, "application/pdf");
-const fileBlock = {
-	type: "file",
-	file: { data: Buffer.from("%PDF-1.4").toString("base64"), media_type: "application/pdf" },
+const attachments: Record<string, { path: string; mimeType: string; data: string }[]> = {
+	e1: [
+		{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" },
+		{ path: "/gone/a.mp3", mimeType: "audio/mpeg", data: "//uQRAAAAAA=" },
+	],
 };
+const find = (entryId: string, index: number) => attachments[entryId]?.[index];
 
-test("inlines a marker in string content as a raw-base64 file block", async () => {
-	const payload = { model: "m", messages: [{ role: "user", content: `read this\n\n${marker}` }] };
-	assert.deepEqual(await rewritePayload(payload), {
-		model: "m",
-		messages: [{ role: "user", content: [{ type: "text", text: "read this" }, fileBlock] }],
-	});
-});
+const pdfPart = { type: "file", file: { data: "JVBERi0xLjQ=", media_type: "application/pdf" } };
+const mp3Part = { type: "file", file: { data: "//uQRAAAAAA=", media_type: "audio/mpeg" } };
 
-test("inlines markers inside array content and keeps other parts", async () => {
+test("replaces marker blocks with file parts from the attachment", () => {
 	const payload = {
+		model: "m",
 		messages: [
 			{
 				role: "user",
 				content: [
-					{ type: "text", text: `${marker} summarize` },
+					{ type: "text", text: "see @doc.pdf" },
 					{ type: "image_url", image_url: { url: "data:image/png;base64,xx" } },
+					{ type: "text", text: "[[pi-media:e1:0]]" },
+					{ type: "text", text: "[[pi-media:e1:1]]" },
 				],
 			},
 		],
 	};
-	assert.deepEqual(await rewritePayload(payload), {
+	assert.deepEqual(rewritePayload(payload, find), {
+		model: "m",
 		messages: [
 			{
 				role: "user",
 				content: [
-					fileBlock,
-					{ type: "text", text: "summarize" },
+					{ type: "text", text: "see @doc.pdf" },
 					{ type: "image_url", image_url: { url: "data:image/png;base64,xx" } },
+					pdfPart,
+					mp3Part,
 				],
 			},
 		],
 	});
 });
 
-test("keeps the marker as text when the file is gone", async () => {
-	const missing = makeMarker(join(dir, "gone.pdf"), "application/pdf");
-	assert.deepEqual(await rewritePayload({ messages: [{ role: "user", content: missing }] }), {
-		messages: [{ role: "user", content: [{ type: "text", text: missing }] }],
+test("splits string content around a marker", () => {
+	assert.deepEqual(rewritePayload({ messages: [{ role: "user", content: "read this\n[[pi-media:e1:0]]" }] }, find), {
+		messages: [{ role: "user", content: [{ type: "text", text: "read this" }, pdfPart] }],
 	});
 });
 
-test("returns undefined when nothing matches", async () => {
-	assert.equal(await rewritePayload({ messages: [{ role: "user", content: "hello" }] }), undefined);
-	assert.equal(await rewritePayload({ messages: [{ role: "assistant", content: null }] }), undefined);
+test("removes a marker whose entry or index is missing", () => {
+	const content = [
+		{ type: "text", text: "hi" },
+		{ type: "text", text: "[[pi-media:gone:0]]" },
+		{ type: "text", text: "[[pi-media:e1:7]]" },
+	];
+	assert.deepEqual(rewritePayload({ messages: [{ role: "user", content }] }, find), {
+		messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+	});
 });
 
-test("passes through non-message payload shapes", async () => {
-	assert.equal(await rewritePayload(undefined), undefined);
-	assert.equal(await rewritePayload("raw"), undefined);
-	assert.equal(await rewritePayload({ foo: 1 }), undefined);
-	assert.equal(await rewritePayload({ messages: "nope" }), undefined);
+test("returns undefined when nothing matches", () => {
+	assert.equal(rewritePayload({ messages: [{ role: "user", content: "hello" }] }, find), undefined);
+	assert.equal(rewritePayload({ messages: [{ role: "assistant", content: null }] }, find), undefined);
 });
 
-test("leaves untouched messages by reference", async () => {
+test("passes through non-message payload shapes", () => {
+	assert.equal(rewritePayload(undefined, find), undefined);
+	assert.equal(rewritePayload("raw", find), undefined);
+	assert.equal(rewritePayload({ foo: 1 }, find), undefined);
+	assert.equal(rewritePayload({ messages: "nope" }, find), undefined);
+});
+
+test("leaves untouched messages by reference", () => {
 	const untouched = { role: "system", content: "sys" };
-	const payload = { messages: [untouched, { role: "user", content: marker }] };
-	const result = (await rewritePayload(payload)) as { messages: unknown[] };
-	assert.equal(result.messages[0], untouched);
+	const result = rewritePayload({ messages: [untouched, { role: "user", content: "[[pi-media:e1:0]]" }] }, find);
+	assert.equal(result?.messages[0], untouched);
 });

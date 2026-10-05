@@ -1,31 +1,19 @@
-import { readFile } from "node:fs/promises";
-import { makeMarker, splitMarkers } from "./media.ts";
+import { splitMarkers } from "./marker.ts";
+import type { Attachment } from "./media-entry.ts";
 
+type FindAttachment = (entryId: string, index: number) => Attachment | undefined;
 type FilePart = { type: "file"; file: { data: string; media_type: string } };
 type ContentPart = { type: "text"; text: string } | FilePart;
 
-async function toFilePart(path: string, mediaType: string): Promise<FilePart | undefined> {
-	try {
-		const bytes = await readFile(path);
-		return { type: "file", file: { data: bytes.toString("base64"), media_type: mediaType } };
-	} catch {
-		return undefined;
-	}
-}
-
-async function toParts(text: string) {
+// A marker without its attachment is removed.
+function toParts(text: string, find: FindAttachment) {
 	const segments = splitMarkers(text);
 	if (!segments.some((segment) => segment.type === "media")) return undefined;
-	const parts: ContentPart[] = [];
-	for (const segment of segments) {
-		if (segment.type === "text") {
-			parts.push(segment);
-			continue;
-		}
-		const part = await toFilePart(segment.path, segment.mediaType);
-		parts.push(part ?? { type: "text", text: makeMarker(segment.path, segment.mediaType) });
-	}
-	return parts;
+	return segments.flatMap((segment): ContentPart[] => {
+		if (segment.type === "text") return [segment];
+		const attachment = find(segment.entryId, segment.index);
+		return attachment ? [{ type: "file", file: { data: attachment.data, media_type: attachment.mimeType } }] : [];
+	});
 }
 
 function isTextPart(part: unknown): part is { type: "text"; text: string } {
@@ -33,20 +21,20 @@ function isTextPart(part: unknown): part is { type: "text"; text: string } {
 	return !!candidate && typeof candidate === "object" && candidate.type === "text" && typeof candidate.text === "string";
 }
 
-async function rewriteContent(content: unknown) {
-	if (typeof content === "string") return toParts(content);
+function rewriteContent(content: unknown, find: FindAttachment) {
+	if (typeof content === "string") return toParts(content, find);
 	if (!Array.isArray(content)) return undefined;
-	const rewritten = await Promise.all(content.map((part) => (isTextPart(part) ? toParts(part.text) : undefined)));
+	const rewritten = content.map((part) => (isTextPart(part) ? toParts(part.text, find) : undefined));
 	if (rewritten.every((parts) => parts === undefined)) return undefined;
 	return content.flatMap((part, index) => rewritten[index] ?? [part]);
 }
 
-export async function rewritePayload(payload: unknown) {
+export function rewritePayload(payload: unknown, find: FindAttachment) {
 	if (!payload || typeof payload !== "object") return undefined;
 	const messages = (payload as { messages?: unknown }).messages;
 	if (!Array.isArray(messages)) return undefined;
-	const contents = await Promise.all(
-		messages.map((msg) => (msg && typeof msg === "object" ? rewriteContent((msg as { content?: unknown }).content) : undefined)),
+	const contents = messages.map((msg) =>
+		msg && typeof msg === "object" ? rewriteContent((msg as { content?: unknown }).content, find) : undefined,
 	);
 	if (contents.every((content) => content === undefined)) return undefined;
 	return { ...payload, messages: messages.map((msg, index) => (contents[index] ? { ...msg, content: contents[index] } : msg)) };

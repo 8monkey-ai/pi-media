@@ -44,12 +44,18 @@ pi-media finds files with the same rules as pi's `read` tool:
 
 ## Supported files
 
-| Kind | How pi-media finds the type |
-|---|---|
-| Image: PNG, JPEG, GIF, WebP, BMP | From the first bytes of the file, with pi's own image check |
-| Audio | Extension: `wav` `mp3` `aac` `flac` `ogg` `aiff` `aif` |
-| Video | Extension: `mp4` `mov` `webm` `mpeg` `mpg` `avi` `wmv` `flv` `3gp` |
-| Document | Extension: `pdf` |
+pi-media finds the type of a file from its first bytes. The file extension has no effect.
+
+| Kind | Types | Type check |
+|---|---|---|
+| Image | PNG, JPEG, GIF, WebP, BMP | Pi's own image check |
+| Audio | All `audio/*` types | The [`file-type`](https://github.com/sindresorhus/file-type) package |
+| Video | All `video/*` types | The `file-type` package |
+| Document | PDF | The `file-type` package |
+
+## Your message
+
+Your message text stays as you typed it, with the path in it, for all kinds of files.
 
 ## Images
 
@@ -60,13 +66,13 @@ pi-media gives images to pi, and pi handles them the same way as all other image
 - If the model does not accept images, pi sends a placeholder text.
 - The `blockImages` setting applies.
 
-Your message text stays as you typed it, with the path in it.
-
 pi-media does not attach HEIC and HEIF files, because pi does not detect them. A file with an image extension but other content stays as text.
 
 ## Audio, video and PDFs
 
-pi-media replaces the path, with its `@`, quotes or backslashes, with a marker in your message. On each request, it reads the file again and sends it as a chat-completions content part: `{"type":"file","file":{"data":"<base64>","media_type":"<mime>"}}`. Gateways that accept this shape get the file. Other providers, for example Anthropic direct, Bedrock or the Gemini API, get the path as text.
+pi-media reads the file when you send the message and stores its bytes in the session, next to your message. Later turns and resumed sessions send the stored bytes. If the file changes or you delete it, the model still gets the file as it was when you sent the message.
+
+On each request, pi-media sends the stored file as a chat-completions content part: `{"type":"file","file":{"data":"<base64>","media_type":"<mime>"}}`. Gateways that accept this shape get the file. Other providers, for example Anthropic direct, Bedrock or the Gemini API, do not accept this shape. The request can fail, or the model gets the text `[[pi-media:<id>:<n>]]` instead of the file.
 
 Planned, in approximate order: Gemini API and Vertex, Anthropic and Bedrock (PDFs only), OpenAI, OpenRouter.
 
@@ -75,9 +81,13 @@ Planned, in approximate order: Gemini API and Vertex, Anthropic and Bedrock (PDF
 - A path stays as you typed it if it does not point to an existing, non-empty file of a supported type. Directories, missing files, empty files and other file types stay as text.
 - pi-media does not attach files larger than 20 MB. The path stays as text.
 - A path without quotes or backslashes ends at the first space if its line has other text. In `see /Users/me/My File.png`, pi-media looks for `/Users/me/My`, and the text stays as you typed it.
+- pi-media finds the stored file of a message by its text. Audio, video and PDFs do not attach to a message that starts with a skill (`/skill:name`) or a prompt template (`/name`), because pi replaces the text of these messages.
+- A message gets the files of one stored entry at most. If you clear the message queue, or edit a message in the session tree, the stored files of that message stay unused. A later message with the same text that attaches no files of its own gets these files.
 - Errors from the provider, for example an unsupported media kind or a request that is too large, show in the UI unchanged.
 
-No runtime dependencies, no build step. Runs under Node and Bun.
+## Requirements
+
+Node 22 or later, or Bun. pi-media has no build step.
 
 ## Development
 
