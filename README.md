@@ -81,6 +81,7 @@ On each request, pi-media looks at the API of the model and formats the stored f
 | Anthropic Messages (`anthropic-messages`) | PDF | `{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"<base64>"}}` |
 | Amazon Bedrock Converse (`bedrock-converse-stream`) | PDF, video, audio | `document` (format `pdf`), `video` and `audio` blocks with the raw bytes |
 | OpenAI Responses, Azure OpenAI Responses and OpenAI Codex (`openai-responses`, `azure-openai-responses`, `openai-codex-responses`) | PDF | `{"type":"input_file","filename":"<name>","file_data":"data:application/pdf;base64,<base64>"}` |
+| OpenRouter (`openai-completions`, provider `openrouter`) | PDF; audio (wav, mp3, aiff, aac, ogg, flac, m4a); video (mp4, mpeg, webm) | PDF: the Chat Completions `file` part; audio: `{"type":"input_audio","input_audio":{"data":"<base64>","format":"<format>"}}`; video: `{"type":"video_url","video_url":{"url":"data:<mime>;base64,<base64>"}}` |
 | All other APIs | None | The path stays as text |
 
 For all other APIs, for example Mistral, the model gets your message with the path as text, and no file.
@@ -97,7 +98,7 @@ Bedrock gets a document name made from the file name, with only letters, digits,
 
 The Responses API gets audio and video as path text. OpenAI accepts at most 50 MB of files in one request.
 
-Planned: OpenRouter.
+OpenRouter models accept only some of these formats. If a model does not accept a format, the OpenRouter error shows in the UI unchanged. MOV video stays as text.
 
 ## Limits
 
