@@ -14,6 +14,7 @@ const attachments: Record<string, { path: string; mimeType: string; data: string
 		{ path: "/gone/a.mp3", mimeType: "audio/mpeg", data: "//uQRAAAAAA=" },
 		{ path: "/gone/clip.mp4", mimeType: "video/mp4", data: "AAAAGGZ0eXA=" },
 	],
+	abc: [{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
 };
 const find = (entryId: string, index: number) => attachments[entryId]?.[index];
 const rewrite = (payload: unknown) => adapter.rewrite(payload, find);
@@ -121,26 +122,24 @@ test("keeps the cache marker on a last block that is not a marker", async () => 
 	]);
 });
 
-test("splits string content around a marker", async () => {
-	const payload = await payloadFor([user("read [[pi-media:e1:0]] now"), assistant([text("ok")]), user("next")]);
+test("replaces the marker lines at the end of string content", async () => {
+	const payload = await payloadFor([user("read this\n[[pi-media:e1:0]]"), assistant([text("ok")]), user("next")]);
 	assert.deepEqual((rewrite(payload) as { messages: unknown }).messages, [
-		{ role: "user", content: [{ type: "text", text: "read" }, pdfBlock, { type: "text", text: "now" }] },
+		{ role: "user", content: [{ type: "text", text: "read this" }, pdfBlock] },
 		{ role: "assistant", content: [{ type: "text", text: "ok" }] },
 		{ role: "user", content: [{ type: "text", text: "next", ...cache }] },
 	]);
 });
 
-test("moves the cache marker when pi-ai turns the last string content into a block", async () => {
-	const payload = await payloadFor([user("see this\n[[pi-media:e1:0]]")]);
-	assert.deepEqual((rewrite(payload) as { messages: unknown }).messages, [
-		{
-			role: "user",
-			content: [
-				{ type: "text", text: "see this" },
-				{ ...pdfBlock, ...cache },
-			],
-		},
+test("leaves user text that only contains a marker", async () => {
+	const payload = await payloadFor([
+		user("file says [[pi-media:abc:0]] literal"),
+		assistant([text("ok")]),
+		user("[[pi-media:abc:0]]\nmore"),
+		assistant([text("ok")]),
+		user([text("file says [[pi-media:abc:0]] literal"), text("see\n[[pi-media:abc:0]]")]),
 	]);
+	assert.equal(rewrite(payload), undefined);
 });
 
 test("leaves markers in assistant messages", async () => {
@@ -216,6 +215,33 @@ test("removes a tool result marker whose kind is not carried or whose attachment
 			content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: note }], is_error: false, ...cache }],
 		});
 	}
+});
+
+test("leaves tool result text that only contains a marker", async () => {
+	for (const content of [[text("file says [[pi-media:abc:0]] literal")], [text("a"), text("b [[pi-media:abc:0]]")]]) {
+		const payload = await payloadFor([user("read it"), assistant([readCall("t1")], "toolUse"), toolResult("t1", content)]);
+		assert.equal(rewrite(payload), undefined);
+	}
+});
+
+test("takes only the marker lines at the end of a tool result", async () => {
+	const payload = await payloadFor([
+		user("read it"),
+		assistant([readCall("t1")], "toolUse"),
+		toolResult("t1", [text("first\n[[pi-media:abc:0]]\nlast"), text("[[pi-media:e1:0]]")]),
+	]);
+	assert.deepEqual((rewrite(payload) as { messages: unknown[] }).messages[2], {
+		role: "user",
+		content: [
+			{
+				type: "tool_result",
+				tool_use_id: "t1",
+				content: [{ type: "text", text: "first\n[[pi-media:abc:0]]\nlast" }, pdfBlock],
+				is_error: false,
+				...cache,
+			},
+		],
+	});
 });
 
 test("rewrites one of two tool results in a row, and a user message marker in the same payload", async () => {

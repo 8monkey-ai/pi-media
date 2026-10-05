@@ -15,6 +15,7 @@ const attachments: Record<string, { path: string; mimeType: string; data: string
 		{ path: "/gone/clip.mp4", mimeType: "video/mp4", data: "AAAAGGZ0eXA=" },
 		{ path: "/gone/shot.heic", mimeType: "image/heic", data: "AAAA" },
 	],
+	abc: [{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
 };
 const find = (entryId: string, index: number) => attachments[entryId]?.[index];
 
@@ -100,12 +101,15 @@ for (const [api, provider] of [
 		});
 	});
 
-	test(`${api}: splits a text part around a marker`, async () => {
-		const payload = await payloadFor(api, [user("read this\n[[pi-media:e1:0]] then that")]);
-		assert.deepEqual(rewrite(payload), {
-			...payload,
-			contents: [{ role: "user", parts: [{ text: "read this" }, pdfPart, { text: "then that" }] }],
-		});
+	test(`${api}: leaves user text that only contains a marker`, async () => {
+		const payload = await payloadFor(api, [
+			user("file says [[pi-media:abc:0]] literal"),
+			user([
+				{ type: "text", text: "file says [[pi-media:abc:0]] literal" },
+				{ type: "text", text: "see\n[[pi-media:abc:0]]" },
+			]),
+		]);
+		assert.equal(rewrite(payload), undefined);
 	});
 
 	test(`${api}: removes a marker whose attachment is missing or of a type it does not carry`, async () => {
@@ -223,6 +227,32 @@ for (const [api, provider] of [
 				]);
 			}
 		}
+	});
+
+	test(`${api}: leaves tool result text that only contains a marker`, async () => {
+		const payload = await payloadFor(api, readContext([{ type: "text", text: "file says [[pi-media:abc:0]] literal" }]));
+		assert.equal(rewrite(payload), undefined);
+	});
+
+	test(`${api}: takes only the marker lines at the end of a tool result`, async () => {
+		const payload = await payloadFor(
+			api,
+			readContext([
+				{ type: "text", text: "first\n[[pi-media:abc:0]]\nlast" },
+				{ type: "text", text: "[[pi-media:e1:0]]" },
+			]),
+			"gemini-3-flash-preview",
+		);
+		assert.deepEqual((rewrite(payload) as typeof payload).contents[2].parts, [
+			{
+				functionResponse: {
+					name: "read",
+					response: { output: "first\n[[pi-media:abc:0]]\nlast" },
+					parts: [pdfPart],
+					id: "t0",
+				},
+			},
+		]);
 	});
 
 	test(`${api}: removes a marker from an error result`, async () => {

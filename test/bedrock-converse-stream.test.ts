@@ -17,6 +17,7 @@ const attachments: Record<string, { path: string; mimeType: string; data: string
 		{ path: "/gone/shot.heic", mimeType: "image/heic", data: "AAAA" },
 		{ path: "/other/doc.pdf", mimeType: "application/pdf", data: pdf },
 	],
+	abc: [{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: pdf }],
 };
 const find = (entryId: string, index: number) => attachments[entryId]?.[index];
 const rewrite = (payload: unknown) => adapter.rewrite(payload, find);
@@ -103,10 +104,12 @@ test("carries PDFs and the video and audio types that Converse has a format for"
 		"audio/amr",
 		"image/heic",
 		"text/plain",
+		"constructor",
+		"toString",
 	];
 	assert.deepEqual(
 		types.map((type) => adapter.carries(type, "user")),
-		[true, true, true, true, true, false, false, false, false],
+		[true, true, true, true, true, false, false, false, false, false, false],
 	);
 });
 
@@ -206,10 +209,20 @@ test("removes a marker whose attachment is missing or of a type it does not carr
 });
 
 test("carries PDFs and video in tool results, and not audio", () => {
-	const types = ["application/pdf", "video/mp4", "video/3gpp", "audio/mpeg", "audio/wav", "image/heic", "text/plain"];
+	const types = [
+		"application/pdf",
+		"video/mp4",
+		"video/3gpp",
+		"audio/mpeg",
+		"audio/wav",
+		"image/heic",
+		"text/plain",
+		"constructor",
+		"toString",
+	];
 	assert.deepEqual(
 		types.map((type) => adapter.carries(type, "toolResult")),
-		[true, true, true, false, false, false, false],
+		[true, true, true, false, false, false, false, false, false],
 	);
 });
 
@@ -306,6 +319,12 @@ test("names documents in user messages and tool results in message order, the sa
 	];
 	assert.deepEqual((rewrite(payload) as typeof payload).messages, expected);
 	assert.deepEqual((rewrite(payload) as typeof payload).messages, expected);
+});
+
+test("leaves user and tool result text that only contains a marker", async () => {
+	const probe = "file says [[pi-media:abc:0]] literal";
+	const payload = await payloadFor([user(probe, "see\n[[pi-media:abc:0]]"), readCall("t1"), readResult("t1", probe)]);
+	assert.equal(rewrite(payload), undefined);
 });
 
 test("leaves markers in assistant messages", async () => {

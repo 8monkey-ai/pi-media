@@ -1,4 +1,4 @@
-import { splitMarkers } from "../marker.ts";
+import { takeMarkers } from "../marker.ts";
 import type { Attachment } from "../media-entry.ts";
 import type { FindAttachment } from "./adapter.ts";
 import { registerAdapter } from "./registry.ts";
@@ -41,19 +41,16 @@ function fitsFunctionResponse(attachment: Attachment) {
 	return attachment.mimeType === "application/pdf";
 }
 
-// The context hook adds a tool result marker as a text block of its own, and pi-ai joins text blocks with "\n".
-// Removes each line that is only a marker, and returns the carried attachments of these markers.
+// pi-ai joins the text blocks of a tool result with "\n". Returns the text without its markers, and the carried
+// attachments of these markers.
 function takeMarkerLines(text: string, attachment: FindAttachment) {
-	const lines = text.split("\n");
-	const files: Attachment[] = [];
-	const kept = lines.filter((line) => {
-		const [segment, ...rest] = splitMarkers(line);
-		if (segment?.type !== "media" || rest.length > 0) return true;
-		const found = attachment(segment.entryId, segment.index);
-		if (found && carries(found.mimeType)) files.push(found);
-		return false;
+	const taken = takeMarkers(text, true);
+	if (!taken) return undefined;
+	const files = taken.markers.flatMap(({ entryId, index }) => {
+		const found = attachment(entryId, index);
+		return found && carries(found.mimeType) ? [found] : [];
 	});
-	return kept.length === lines.length ? undefined : { text: kept.join("\n"), files };
+	return { text: taken.text, files };
 }
 
 // Returns the function response part without its markers, and the files that must go in a user turn after it.

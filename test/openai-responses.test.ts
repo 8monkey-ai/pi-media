@@ -16,6 +16,7 @@ const attachments: Record<string, { path: string; mimeType: string; data: string
 		{ path: "/gone/clip.mp4", mimeType: "video/mp4", data: "AAAAGGZ0eXA=" },
 		{ path: "/gone/shot.heic", mimeType: "image/heic", data: "AAAA" },
 	],
+	abc: [{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
 };
 const find = (entryId: string, index: number) => attachments[entryId]?.[index];
 
@@ -67,6 +68,7 @@ const toolAttachments: Record<string, { path: string; mimeType: string; data: st
 		{ path: "/tmp/x/song.mp3", mimeType: "audio/mpeg", data: "//uQRAAAAAA=" },
 	],
 	u1: [attachments.e1[0]],
+	abc: [attachments.e1[0]],
 };
 const findForTools = (entryId: string, index: number) => toolAttachments[entryId]?.[index];
 
@@ -116,14 +118,15 @@ for (const [api, provider] of [
 		]);
 	});
 
-	test(`${api}: splits a text part around a marker`, async () => {
-		const payload = await payloadFor(api, [user("read this\n[[pi-media:e1:0]] then that")]);
-		assert.deepEqual(userItems(rewrite(payload)), [
-			{
-				role: "user",
-				content: [{ type: "input_text", text: "read this" }, pdfPart, { type: "input_text", text: "then that" }],
-			},
+	test(`${api}: leaves user text that only contains a marker`, async () => {
+		const payload = await payloadFor(api, [
+			user("file says [[pi-media:abc:0]] literal"),
+			user([
+				{ type: "text", text: "file says [[pi-media:abc:0]] literal" },
+				{ type: "text", text: "see\n[[pi-media:abc:0]]" },
+			]),
 		]);
+		assert.equal(rewrite(payload), undefined);
 	});
 
 	test(`${api}: removes markers of audio, video, other types and missing attachments, and keeps the typed text`, async () => {
@@ -168,9 +171,15 @@ for (const [api, provider] of [
 	});
 
 	test(`${api}: gives the same bytes for two rewrites of equal payloads`, async () => {
-		const messages = [user([{ type: "text" as const, text: "see @doc.pdf\n[[pi-media:e1:0]]" }])];
+		const messages = [
+			user([
+				{ type: "text" as const, text: "see @doc.pdf" },
+				{ type: "text" as const, text: "[[pi-media:e1:0]]" },
+			]),
+		];
 		const first = rewrite(await payloadFor(api, messages));
 		const second = rewrite(await payloadFor(api, messages));
+		assert.notEqual(first, undefined);
 		assert.deepEqual(first, second);
 		assert.equal(JSON.stringify(userItems(first)), JSON.stringify(userItems(second)));
 	});
@@ -224,6 +233,39 @@ for (const [api, provider] of [
 		}
 	});
 
+	const textResult = (id: string, ...texts: string[]): Message => ({
+		role: "toolResult",
+		toolCallId: id,
+		toolName: "read",
+		content: texts.map((text) => ({ type: "text", text })),
+		isError: false,
+		timestamp: 1,
+	});
+
+	test(`${api}: leaves tool result text that only contains a marker`, async () => {
+		const payload = await payloadFor(api, [
+			user("go"),
+			...readCall("t1"),
+			textResult("t1", "file says [[pi-media:abc:0]] literal"),
+		]);
+		assert.equal(toolRewrite(payload), undefined);
+	});
+
+	test(`${api}: takes only the marker lines at the end of a tool result`, async () => {
+		const payload = await payloadFor(api, [
+			user("go"),
+			...readCall("t1"),
+			textResult("t1", "first\n[[pi-media:abc:0]]\nlast", "[[pi-media:e1:0]]"),
+		]);
+		assert.deepEqual(toolOutputs(toolRewrite(payload)), [
+			{
+				type: "function_call_output",
+				call_id: "t1",
+				output: [{ type: "input_text", text: "first\n[[pi-media:abc:0]]\nlast" }, reportPart],
+			},
+		]);
+	});
+
 	test(`${api}: changes only the tool result with media and keeps the next one by reference`, async () => {
 		const payload = await payloadFor(api, [
 			user("go"),
@@ -253,7 +295,10 @@ for (const [api, provider] of [
 
 	test(`${api}: rewrites a user message marker and a tool result marker in one payload`, async () => {
 		const payload = await payloadFor(api, [
-			user([{ type: "text", text: "see @doc.pdf\n[[pi-media:u1:0]]" }]),
+			user([
+				{ type: "text", text: "see @doc.pdf" },
+				{ type: "text", text: "[[pi-media:u1:0]]" },
+			]),
 			...readCall("t1"),
 			readResult("t1", "[[pi-media:e1:0]]"),
 		]);
@@ -266,7 +311,10 @@ for (const [api, provider] of [
 
 	test(`${api}: gives the same bytes for two rewrites of equal payloads with tool results`, async () => {
 		const messages = [
-			user([{ type: "text" as const, text: "see @doc.pdf\n[[pi-media:u1:0]]" }]),
+			user([
+				{ type: "text" as const, text: "see @doc.pdf" },
+				{ type: "text" as const, text: "[[pi-media:u1:0]]" },
+			]),
 			...readCall("t1"),
 			readResult("t1", "[[pi-media:e1:0]]"),
 		];

@@ -17,6 +17,7 @@ const attachments: Record<string, { path: string; mimeType: string; data: string
 		{ path: "/gone/song.ogg", mimeType: "audio/ogg", data: "T2dnUwAC" },
 		{ path: "/gone/shot.heic", mimeType: "image/heic", data: "AAAA" },
 	],
+	abc: [{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
 };
 const find = (entryId: string, index: number) => attachments[entryId]?.[index];
 const rewrite = (payload: unknown) => adapter.rewrite(payload, find);
@@ -105,11 +106,20 @@ test("replaces marker blocks with file and input_audio parts and keeps images an
 	]);
 });
 
-test("splits string content around a marker", async () => {
-	const payload = await piPayload(["read this\n[[pi-media:e1:0]] then that"]);
-	assert.deepEqual(contentOf(rewrite(payload)), [
-		[{ type: "text", text: "read this" }, pdfPart, { type: "text", text: "then that" }],
+test("replaces the marker lines at the end of string content", async () => {
+	const payload = await piPayload(["read this\n[[pi-media:e1:0]]\n[[pi-media:e1:1]]", "hi"]);
+	assert.deepEqual(contentOf(rewrite(payload)), [[{ type: "text", text: "read this" }, pdfPart, mp3Part], "hi"]);
+});
+
+test("leaves user text that only contains a marker", async () => {
+	const payload = await piPayload([
+		"file says [[pi-media:abc:0]] literal",
+		"[[pi-media:abc:0]]\nmore",
+		[{ type: "text", text: "file says [[pi-media:abc:0]] literal" }],
+		[{ type: "text", text: "see\n[[pi-media:abc:0]]" }],
+		"hi",
 	]);
+	assert.equal(rewrite(payload), undefined);
 });
 
 test("removes markers of video, other audio, other types and missing attachments, and keeps the typed text", async () => {
@@ -137,16 +147,6 @@ test("keeps the cache marker on the last text part when the marker block that he
 	assert.deepEqual(contentOf(rewrite(payload)), [
 		[{ type: "text", text: "earlier @a.mp3" }, mp3Part],
 		[{ type: "text", text: "see @doc.pdf", cache_control: { type: "ephemeral" } }, pdfPart],
-	]);
-});
-
-test("keeps the cache marker of string content on the text before the marker", async () => {
-	const payload = await piPayload(["read @doc.pdf\n[[pi-media:e1:0]]"], {
-		provider: "openrouter",
-		id: "anthropic/claude-sonnet-4",
-	});
-	assert.deepEqual(contentOf(rewrite(payload)), [
-		[{ type: "text", text: "read @doc.pdf", cache_control: { type: "ephemeral" } }, pdfPart],
 	]);
 });
 
@@ -269,6 +269,28 @@ test("removes the tool result marker of a type it does not carry or a missing at
 	}
 });
 
+test("leaves tool result text that only contains a marker", async () => {
+	const payload = await piMessagesPayload(
+		readTurn(toolResult("call_1", [{ type: "text", text: "file says [[pi-media:abc:0]] literal" }])),
+	);
+	assert.equal(adapter.rewrite(payload, lookup({ abc: pdf })), undefined);
+});
+
+test("takes only the marker lines at the end of a tool result", async () => {
+	const payload = await piMessagesPayload(
+		readTurn(
+			toolResult("call_1", [
+				{ type: "text", text: "first\n[[pi-media:abc:0]]\nlast" },
+				{ type: "text", text: "[[pi-media:e1:0]]" },
+			]),
+		),
+	);
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, lookup({ abc: pdf, e1: pdf }))).slice(2), [
+		{ role: "tool", content: "first\n[[pi-media:abc:0]]\nlast", tool_call_id: "call_1" },
+		followUp(reportPart),
+	]);
+});
+
 test("puts the files after the last of consecutive tool results", async () => {
 	const payload = await piMessagesPayload(
 		readTurn(readPdf("call_1"), toolResult("call_2", [{ type: "text", text: "line one" }])),
@@ -328,6 +350,16 @@ test("puts the files after the assistant message that pi-ai adds after tool resu
 				reportPart,
 			],
 		},
+	]);
+});
+
+test("adds the assistant message that pi-ai adds after tool results for some providers when the tool results are last", async () => {
+	const payload = await piMessagesPayload(readTurn(readPdf()), { compat: { requiresAssistantAfterToolResult: true } });
+	assert.equal(payload.messages[1].content, "");
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, lookup({ e1: pdf }))).slice(2), [
+		{ role: "tool", content: pdfNote, tool_call_id: "call_1" },
+		{ role: "assistant", content: "I have processed the tool results." },
+		followUp(reportPart),
 	]);
 });
 

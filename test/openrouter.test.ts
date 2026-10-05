@@ -27,6 +27,7 @@ const attachments: Record<string, { path: string; mimeType: string; data: string
 		{ path: "/gone/a.m4b", mimeType: "audio/mp4", data: "AAAAHGZ0eXBNNEI=" },
 		{ path: "/gone/shot.heic", mimeType: "image/heic", data: "AAAA" },
 	],
+	abc: [{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
 };
 const find = (entryId: string, index: number) => attachments[entryId]?.[index];
 const rewrite = (payload: unknown) => adapter.rewrite(payload, find);
@@ -135,11 +136,23 @@ test("replaces marker blocks with file, input_audio and video_url parts and keep
 	]);
 });
 
-test("splits string content around a marker", async () => {
-	const payload = await piPayload(["watch this\n[[pi-media:e1:8]] then that"]);
+test("replaces the marker lines at the end of string content", async () => {
+	const payload = await piPayload(["watch this\n[[pi-media:e1:8]]", "hi"]);
 	assert.deepEqual(contentOf(rewrite(payload)), [
-		[{ type: "text", text: "watch this" }, videoPart("data:video/mp4;base64,AAAAGGZ0eXA="), { type: "text", text: "then that" }],
+		[{ type: "text", text: "watch this" }, videoPart("data:video/mp4;base64,AAAAGGZ0eXA=")],
+		"hi",
 	]);
+});
+
+test("leaves user and tool result text that only contains a marker", async () => {
+	const probe = "file says [[pi-media:abc:0]] literal";
+	const payload = await piMessagesPayload([
+		{ role: "user", content: probe, timestamp: 0 },
+		{ role: "user", content: [{ type: "text", text: probe }], timestamp: 0 },
+		readTurn[1],
+		{ ...readTurn[2], content: [{ type: "text", text: probe }] } as Message,
+	]);
+	assert.equal(rewrite(payload), undefined);
 });
 
 test("removes markers of types it does not carry and of missing attachments, and keeps the typed text", async () => {

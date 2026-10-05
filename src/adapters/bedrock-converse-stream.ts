@@ -18,29 +18,29 @@ const shape: PayloadShape = {
 };
 
 // Converse format strings for the MIME types that file-type detects.
-const videoFormats: Record<string, string> = {
-	"video/mp4": "mp4",
-	"video/quicktime": "mov",
-	"video/webm": "webm",
-	"video/matroska": "mkv",
-	"video/x-flv": "flv",
-	"video/mpeg": "mpeg",
-	"video/3gpp": "three_gp",
-};
-const audioFormats: Record<string, string> = {
-	"audio/mpeg": "mp3",
-	"audio/wav": "wav",
-	"audio/flac": "flac",
-	"audio/aac": "aac",
-	"audio/ogg": "ogg",
-	"audio/ogg; codecs=opus": "opus",
-	"audio/mp4": "mp4",
-	"audio/x-m4a": "m4a",
-};
+const videoFormats = new Map([
+	["video/mp4", "mp4"],
+	["video/quicktime", "mov"],
+	["video/webm", "webm"],
+	["video/matroska", "mkv"],
+	["video/x-flv", "flv"],
+	["video/mpeg", "mpeg"],
+	["video/3gpp", "three_gp"],
+]);
+const audioFormats = new Map([
+	["audio/mpeg", "mp3"],
+	["audio/wav", "wav"],
+	["audio/flac", "flac"],
+	["audio/aac", "aac"],
+	["audio/ogg", "ogg"],
+	["audio/ogg; codecs=opus", "opus"],
+	["audio/mp4", "mp4"],
+	["audio/x-m4a", "m4a"],
+]);
 
 // A Converse tool result has document and video blocks, but no audio block.
 function carries(mimeType: string, place: "user" | "toolResult") {
-	return mimeType === "application/pdf" || mimeType in videoFormats || (place === "user" && mimeType in audioFormats);
+	return mimeType === "application/pdf" || videoFormats.has(mimeType) || (place === "user" && audioFormats.has(mimeType));
 }
 
 // Converse allows only ASCII letters and digits, single spaces, hyphens, parentheses and square brackets, up to 200 characters.
@@ -72,8 +72,10 @@ function block({ path, mimeType, data }: Attachment, used: Set<string>) {
 	if (mimeType === "application/pdf") {
 		return { document: { format: "pdf", name: uniqueName(documentName(path), used), source } };
 	}
-	if (mimeType in videoFormats) return { video: { format: videoFormats[mimeType], source } };
-	if (mimeType in audioFormats) return { audio: { format: audioFormats[mimeType], source } };
+	const video = videoFormats.get(mimeType);
+	if (video) return { video: { format: video, source } };
+	const audio = audioFormats.get(mimeType);
+	if (audio) return { audio: { format: audio, source } };
 	return undefined;
 }
 

@@ -1,21 +1,30 @@
-const MARKER_RE = /\[\[pi-media:([^:\]]+):(\d+)\]\]/g;
+const MARKER_RE = /^\[\[pi-media:([^:\]]+):(\d+)\]\]$/;
 
 export function makeMarker(entryId: string, index: number) {
 	return `[[pi-media:${entryId}:${index}]]`;
 }
 
-type MarkerSegment = { type: "text"; text: string } | { type: "media"; entryId: string; index: number };
+function parseMarker(text: string) {
+	const match = MARKER_RE.exec(text);
+	return match ? { entryId: match[1], index: Number(match[2]) } : undefined;
+}
 
-export function splitMarkers(text: string): MarkerSegment[] {
-	const segments: MarkerSegment[] = [];
-	let last = 0;
-	for (const match of text.matchAll(MARKER_RE)) {
-		const before = text.slice(last, match.index).trim();
-		if (before) segments.push({ type: "text", text: before });
-		segments.push({ type: "media", entryId: match[1], index: Number(match[2]) });
-		last = match.index + match[0].length;
+// The context hook adds each marker as the last text blocks of a message, one block for each marker. So a marker is
+// the whole text of a block, or, where pi-ai joins the text blocks into one string with "\n" (`joined`), one of the
+// last lines of that string that are each one whole marker. Text that only contains a marker, for example the output
+// of a tool, stays as it is.
+// Returns the text without its markers, and the markers, or undefined when the text has no marker.
+export function takeMarkers(text: string, joined: boolean) {
+	if (!joined) {
+		const marker = parseMarker(text);
+		return marker && { text: "", markers: [marker] };
 	}
-	const after = text.slice(last).trim();
-	if (after) segments.push({ type: "text", text: after });
-	return segments;
+	const lines = text.split("\n");
+	let start = lines.length;
+	while (start > 0 && parseMarker(lines[start - 1])) start--;
+	if (start === lines.length) return undefined;
+	return {
+		text: lines.slice(0, start).join("\n"),
+		markers: lines.slice(start).flatMap((line) => parseMarker(line) ?? []),
+	};
 }

@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { makeMarker, splitMarkers } from "../marker.ts";
+import { takeMarkers } from "../marker.ts";
 import type { Attachment } from "../media-entry.ts";
 import type { FindAttachment } from "./adapter.ts";
 import { registerAdapter } from "./registry.ts";
@@ -58,33 +58,29 @@ function rewriteChatUserMessages(payload: unknown, attachment: FindAttachment, p
 	};
 }
 
-// pi-ai joins the text of a tool result with line breaks, so each marker is removed with the line break before it.
-function takeMarkers(text: string, attachment: FindAttachment, part: Part) {
-	const markers = splitMarkers(text).flatMap((segment) => (segment.type === "media" ? [segment] : []));
-	if (markers.length === 0) return undefined;
-	const rest = markers.reduce((left, { entryId, index }) => {
-		const marker = makeMarker(entryId, index);
-		return left.includes(`\n${marker}`) ? left.replace(`\n${marker}`, "") : left.replace(marker, "");
-	}, text);
-	const parts = markers.flatMap(({ entryId, index }) => {
+// pi-ai joins the text of a tool result with line breaks.
+function takeToolMarkers(text: string, attachment: FindAttachment, part: Part) {
+	const taken = takeMarkers(text, true);
+	if (!taken) return undefined;
+	const parts = taken.markers.flatMap(({ entryId, index }) => {
 		const found = attachment(entryId, index);
 		const built = found && part(found);
 		return built === undefined ? [] : [built];
 	});
-	return { text: rest, parts };
+	return { text: taken.text, parts };
 }
 
 // Tool message content is a string, or text parts when pi-ai adds a cache marker to it.
 function rewriteToolMessage(message: Message, attachment: FindAttachment, part: Part) {
 	const { content } = message;
 	if (typeof content === "string") {
-		const taken = takeMarkers(content, attachment, part);
+		const taken = takeToolMarkers(content, attachment, part);
 		return taken && { message: { ...message, content: taken.text }, parts: taken.parts };
 	}
 	if (!Array.isArray(content)) return undefined;
 	const taken = content.map((node) => {
 		const text = shape.textOf(node);
-		return text === undefined ? undefined : takeMarkers(text, attachment, part);
+		return text === undefined ? undefined : takeToolMarkers(text, attachment, part);
 	});
 	if (taken.every((nodes) => nodes === undefined)) return undefined;
 	return {
@@ -107,11 +103,20 @@ function toolRuns(messages: unknown[]) {
 	return runs;
 }
 
+const bridge = { role: "assistant", content: "I have processed the tool results." };
+
+// With `compat.requiresAssistantAfterToolResult`, pi-ai writes "" in place of null as the content of an assistant
+// message without text, and adds `bridge` between tool messages and a user message after them.
+function requiresAssistantAfterToolResult(messages: unknown[]) {
+	return messages.some((message) => isRole(message, "assistant") && message.content === "");
+}
+
 // Tool messages take text only. pi-ai puts tool result images in one user message after the tool messages, after
-// the assistant message that it adds there for providers that need one. The files go to the same place.
-function placeAfterRun(messages: unknown[], end: number, parts: unknown[]) {
-	const bridge = messages[end];
-	const at = isRole(bridge, "assistant") && bridge.content === "I have processed the tool results." ? end + 1 : end;
+// `bridge` for providers that need it. The files go to the same place.
+function placeAfterRun(messages: unknown[], end: number, parts: unknown[], needsBridge: boolean) {
+	const after = messages[end];
+	const bridged = isRole(after, "assistant") && after.content === bridge.content;
+	const at = bridged ? end + 1 : end;
 	const next = messages[at];
 	if (
 		isRole(next, "user") &&
@@ -121,7 +126,8 @@ function placeAfterRun(messages: unknown[], end: number, parts: unknown[]) {
 		messages[at] = { ...next, content: [...next.content, ...parts] };
 		return;
 	}
-	messages.splice(at, 0, { role: "user", content: [{ type: "text", text: "Attached file(s) from tool result:" }, ...parts] });
+	const files = { role: "user", content: [{ type: "text", text: "Attached file(s) from tool result:" }, ...parts] };
+	messages.splice(at, 0, ...(needsBridge && !bridged ? [{ ...bridge }, files] : [files]));
 }
 
 function rewriteToolResults(payload: unknown, attachment: FindAttachment, part: Part) {
@@ -132,9 +138,10 @@ function rewriteToolResults(payload: unknown, attachment: FindAttachment, part: 
 	);
 	if (rewritten.every((result) => result === undefined)) return undefined;
 	const result = messages.map((message, index) => rewritten[index]?.message ?? message);
+	const needsBridge = requiresAssistantAfterToolResult(messages);
 	for (const { start, end } of toolRuns(messages).reverse()) {
 		const parts = rewritten.slice(start, end).flatMap((rewrite) => rewrite?.parts ?? []);
-		if (parts.length > 0) placeAfterRun(result, end, parts);
+		if (parts.length > 0) placeAfterRun(result, end, parts, needsBridge);
 	}
 	return { ...(payload as object), messages: result };
 }

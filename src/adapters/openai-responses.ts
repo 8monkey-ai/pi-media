@@ -26,6 +26,7 @@ const toolOutputShape: PayloadShape = {
 	content: "output",
 	textOf: inputText,
 	textNode,
+	joinsText: true,
 };
 
 function carries(mimeType: string) {

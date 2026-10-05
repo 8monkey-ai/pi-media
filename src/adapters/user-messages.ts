@@ -1,9 +1,9 @@
-import { splitMarkers } from "../marker.ts";
+import { takeMarkers } from "../marker.ts";
 import type { Attachment } from "../media-entry.ts";
 import type { FindAttachment } from "./adapter.ts";
 
 type Message = Record<string, unknown>;
-type SplitText = (text: string) => unknown[] | undefined;
+type SplitText = (text: string, joined: boolean) => unknown[] | undefined;
 
 // Where one API keeps user messages and their text in the payload.
 export type PayloadShape = {
@@ -12,14 +12,16 @@ export type PayloadShape = {
 	content: string;
 	textOf(node: unknown): string | undefined;
 	textNode(text: string): unknown;
+	// Whether the text of a node is text blocks that pi-ai joined with "\n". A string content always is.
+	joinsText?: boolean;
 };
 
-function rewriteContent(content: unknown, textOf: PayloadShape["textOf"], split: SplitText) {
-	if (typeof content === "string") return split(content);
+function rewriteContent(content: unknown, shape: PayloadShape, split: SplitText) {
+	if (typeof content === "string") return split(content, true);
 	if (!Array.isArray(content)) return undefined;
 	const replaced = content.map((node) => {
-		const text = textOf(node);
-		return text === undefined ? undefined : split(text);
+		const text = shape.textOf(node);
+		return text === undefined ? undefined : split(text, shape.joinsText ?? false);
 	});
 	if (replaced.every((nodes) => nodes === undefined)) return undefined;
 	return content.flatMap((node, index) => replaced[index] ?? [node]);
@@ -41,18 +43,18 @@ export function rewriteUserMessages(
 	if (!isMessage(payload)) return undefined;
 	const messages = payload[shape.messages];
 	if (!Array.isArray(messages)) return undefined;
-	const split: SplitText = (text) => {
-		const segments = splitMarkers(text);
-		if (!segments.some((segment) => segment.type === "media")) return undefined;
-		return segments.flatMap((segment) => {
-			if (segment.type === "text") return [shape.textNode(segment.text)];
-			const found = attachment(segment.entryId, segment.index);
+	const split: SplitText = (text, joined) => {
+		const taken = takeMarkers(text, joined);
+		if (!taken) return undefined;
+		const parts = taken.markers.flatMap(({ entryId, index }) => {
+			const found = attachment(entryId, index);
 			const built = found && part(found);
 			return built === undefined ? [] : [built];
 		});
+		return taken.text ? [shape.textNode(taken.text), ...parts] : parts;
 	};
 	const contents = messages.map((message) =>
-		isMessage(message) && shape.isUser(message) ? rewriteContent(message[shape.content], shape.textOf, split) : undefined,
+		isMessage(message) && shape.isUser(message) ? rewriteContent(message[shape.content], shape, split) : undefined,
 	);
 	if (contents.every((content) => content === undefined)) return undefined;
 	return {
