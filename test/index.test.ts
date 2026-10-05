@@ -65,6 +65,20 @@ test("marks the request copy of the user message and sends the attachment as a f
 	});
 });
 
+for (const api of ["anthropic-messages", "test-unknown-api"]) {
+	test(`sends only the typed path as text to a model with the ${api} API`, async () => {
+		const { session, requests, settle } = await startSession([extension], { files: { "a.mp3": MP3_BYTES }, api });
+		await settle(session.prompt("listen to @a.mp3"));
+		assert.deepEqual(
+			requests[0].messages.filter((message) => message.role === "user").map((message) => message.content),
+			[[{ type: "text", text: "listen to @a.mp3" }]],
+		);
+		assert.deepEqual(requests[0].payload, {
+			messages: [{ role: "user", content: [{ type: "text", text: "listen to @a.mp3" }] }],
+		});
+	});
+}
+
 test("sends the stored bytes on later turns after the file changes and after it is deleted", async () => {
 	const { session, dir, requests, settle } = await startSession([extension], { files: { "a.mp3": MP3_BYTES } });
 	await settle(session.prompt("listen to @a.mp3"));

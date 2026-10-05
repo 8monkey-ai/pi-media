@@ -22,12 +22,14 @@ function userPayload(messages: Message[]) {
 // Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
 // A model call waits until `settle` runs, so a test can queue input while pi streams.
 // `files` go into the working directory. `sessionManager` defaults to an in-memory one.
+// `api` is the API of the model. It defaults to Chat Completions, the shape of the payload.
 export async function startSession(
 	extensions: ExtensionFactory[],
 	{
 		files = {},
 		sessionManager,
-	}: { files?: Record<string, string | Buffer>; sessionManager?: (dir: string) => SessionManager } = {},
+		api = "openai-completions",
+	}: { files?: Record<string, string | Buffer>; sessionManager?: (dir: string) => SessionManager; api?: string } = {},
 ) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-media-session-"));
 	for (const [name, content] of Object.entries(files)) await writeFile(join(dir, name), content);
@@ -38,7 +40,7 @@ export async function startSession(
 
 	const gates: Array<() => void> = [];
 	const requests: Request[] = [];
-	const faux = fauxProvider();
+	const faux = fauxProvider({ api });
 	const respond: FauxResponseFactory = async (context, options, _state, model) => {
 		const payload = userPayload(context.messages);
 		requests.push({ messages: context.messages, payload: (await options?.onPayload?.(payload, model)) ?? payload });

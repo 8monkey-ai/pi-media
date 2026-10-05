@@ -1,6 +1,6 @@
 # pi-media
 
-Attach local images, audio, video and PDFs to your messages. Type a path, drag a file into the terminal, or paste with Ctrl+V. The model gets the file as an attachment. It does not have to open the path with the `read` tool.
+Attach local images, audio, video and PDFs to your messages. Type a path, drag a file into the terminal, or paste with Ctrl+V. If the provider API accepts the file type, the model gets the file as an attachment. If not, the model gets the path as text.
 
 ## Install
 
@@ -72,9 +72,20 @@ pi-media does not attach HEIC and HEIF files, because pi does not detect them. A
 
 pi-media reads the file when you send the message and stores its bytes in the session, next to your message. Later turns and resumed sessions send the stored bytes. If the file changes or you delete it, the model still gets the file as it was when you sent the message.
 
-On each request, pi-media sends the stored file as a chat-completions content part: `{"type":"file","file":{"data":"<base64>","media_type":"<mime>"}}`. Gateways that accept this shape get the file. Other providers, for example Anthropic direct, Bedrock or the Gemini API, do not accept this shape. The request can fail, or the model gets the text `[[pi-media:<id>:<n>]]` instead of the file.
+On each request, pi-media looks at the API of the model and formats the stored files for that API.
 
-Planned, in approximate order: Gemini API and Vertex, Anthropic and Bedrock (PDFs only), OpenAI, OpenRouter.
+| API | Kinds | Part in the request |
+|---|---|---|
+| OpenAI-compatible Chat Completions (`openai-completions`) | Audio, video, PDF | `{"type":"file","file":{"data":"<base64>","media_type":"<mime>"}}` |
+| All other APIs | None | The path stays as text |
+
+For all other APIs, for example Anthropic, Mistral, Gemini, Bedrock and the OpenAI Responses API, the model gets your message with the path as text, and no file.
+
+A Chat Completions provider that does not accept the `file` part can return an error. The error shows in the UI unchanged.
+
+Virtual models use the API `pi-virtual`, so pi-media cannot find the API of the model that answers. A virtual model gets the path as text, and no file. This is a known limit.
+
+Planned: Gemini API and Vertex, Anthropic (PDFs), Bedrock, the OpenAI Responses API, and OpenRouter.
 
 ## Limits
 
