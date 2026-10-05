@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
 import { detectSupportedImageMimeTypeFromFile, type InputEvent } from "@earendil-works/pi-coding-agent";
+import { findPathCandidates } from "./find-paths.ts";
+import { resolveExistingPath } from "./resolve-path.ts";
 
 type ImageContent = NonNullable<InputEvent["images"]>[number];
 
@@ -29,12 +30,9 @@ const MIME_BY_EXTENSION: Record<string, string> = {
 	pdf: "application/pdf",
 };
 
-// ponytail: files above this are left as plain @paths — base64 in memory would risk an OOM.
+// ponytail: files above this are left as plain paths — base64 in memory would risk an OOM.
 // Raise it, or upload and send a URL instead, if large video matters.
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-
-const AT_PATH_RE = /(?:^|[\s([{])@(?:"([^"]+)"|(\S+))/g;
-const TRAILING_PUNCTUATION_RE = /[)\],.;:!?]+$/;
 
 export function makeMarker(path: string, mediaType: string) {
 	return `[[pi-media:${path}|${mediaType}]]`;
@@ -63,25 +61,32 @@ async function readImage(path: string): Promise<ImageContent | undefined> {
 	}
 }
 
+// Returns the image, or the marker that replaces the path in the text.
+async function attach(mention: string, cwd: string) {
+	const path = await resolveExistingPath(mention, cwd);
+	if (!path || !(await isAttachable(path))) return undefined;
+	const image = await readImage(path);
+	if (image) return image;
+	const mediaType = mediaTypeFromExtension(path);
+	return mediaType ? makeMarker(path, mediaType) : undefined;
+}
+
 export async function attachLocalMedia(text: string, cwd: string) {
 	let result = "";
 	let last = 0;
+	let attachedEnd = 0;
 	const images: ImageContent[] = [];
-	for (const match of text.matchAll(AT_PATH_RE)) {
-		const quoted = match[1];
-		const trailing = quoted ? "" : (match[2].match(TRAILING_PUNCTUATION_RE)?.[0] ?? "");
-		const mention = quoted ?? match[2].slice(0, match[2].length - trailing.length);
-		const path = resolve(cwd, mention);
-		if (!(await isAttachable(path))) continue;
-		const image = await readImage(path);
-		if (image) {
-			images.push(image);
+	for (const { start, end, path } of findPathCandidates(text)) {
+		if (start < attachedEnd) continue;
+		const attachment = await attach(path, cwd);
+		if (!attachment) continue;
+		attachedEnd = end;
+		if (typeof attachment !== "string") {
+			images.push(attachment);
 			continue;
 		}
-		const mediaType = mediaTypeFromExtension(mention);
-		if (!mediaType) continue;
-		result += text.slice(last, match.index + match[0].indexOf("@")) + makeMarker(path, mediaType) + trailing;
-		last = match.index + match[0].length;
+		result += text.slice(last, start) + attachment;
+		last = end;
 	}
 	if (last === 0 && images.length === 0) return undefined;
 	return { text: result + text.slice(last), images };
