@@ -16,9 +16,12 @@ what is wrong with this recording? ~/Downloads/debug-session.mp3
 compare @"Q3 report.pdf" with ./q4-report.pdf
 ```
 
-Type a path, drag a file into the terminal, or paste with Ctrl+V (Alt+V on Windows and WSL). If the API of the model can take the file type, the model gets the file. If not, the model gets only your message with the path in it.
+Type a path, drag a file into the terminal, or paste. If the API of the model can take the file type, the model gets the file. If not, the model gets only your message with the path in it.
 
-When you paste an image, pi writes it to the file `pi-clipboard-<id>.<ext>` in the system temporary directory. Pi then puts the path of that file in your message, and pi-media attaches the file.
+To paste, press Ctrl+V (Alt+V on Windows and WSL):
+
+- When you paste an image, pi writes it to the file `pi-clipboard-<id>.<ext>` in the system temporary directory and puts the path of that file in your message. This works on all platforms. pi-media finds this path also when it has spaces or when other text is directly before or after it.
+- When you paste copied files on macOS, pi puts the path of each file in your message. On Windows and Linux, pi does not paste copied files as paths.
 
 ### Path forms
 
@@ -27,6 +30,7 @@ pi-media finds these paths in your message:
 - `@` mentions, for example `@screen.png`, `@docs/notes.pdf` and `@"Q3 report.pdf"`. When you type `@`, pi lets you search for a file and writes the mention for you.
 - Paths that start with `/`, `~/`, `./` or `../`.
 - `file://` URIs, for example `file:///Users/me/My%20File.pdf`.
+- On Windows, paths that start with a drive (`C:\` or `C:/`), with `\\` for a network share (`\\server\share\a.pdf`), or with `.\`, `..\` or `~\`.
 
 A path starts at the start of the message, after a space, a tab or a line break, or after `(`, `[` or `{`. A `/` in a word or in a URL, for example `https://example.com/a.png`, does not start a path. A relative path such as `docs/notes.pdf` must start with `./` or `@`.
 
@@ -36,12 +40,14 @@ A message can have many paths. pi-media attaches all of them.
 
 Write a path with spaces in one of these forms:
 
-- With a backslash before each space: `/Users/me/My\ File.png`.
 - In single quotes: `'/Users/me/My File.png'`.
 - In double quotes: `"/Users/me/My File.png"`.
+- On macOS and Linux, with a backslash before each space: `/Users/me/My\ File.png`.
 - Alone on a line: `/Users/me/My File.png`. When you paste copied files with Ctrl+V on macOS, pi writes each path on a line of its own.
 
-Terminals usually write a dragged file in one of the first three forms.
+On Windows, a backslash is a part of the path, also in double quotes. Use quotes or a line of its own for a path with spaces: `"C:\Users\me\My File.png"`. In single quotes, pi-media reads `''` and `'\''` as one apostrophe, because PowerShell and Git Bash write an apostrophe in these forms: `'C:\Users\me\it''s.png'`.
+
+Terminals usually write a dragged file in one of these forms. Windows Terminal and the Windows console put double quotes around a path with spaces. The VS Code terminal with PowerShell writes `& 'C:\Users\me\My File.png'`, and pi-media finds the quoted path in it.
 
 ### How a path finds the file
 
@@ -49,6 +55,7 @@ pi-media uses the same rules as pi's `read` tool:
 
 - A relative path starts from the working directory of the session.
 - `~` is your home directory.
+- On Windows, Git Bash, MSYS2 and Cygwin drive paths (`/c/Users/me`, `/cygdrive/c/Users/me`) and WSL drive paths (`/mnt/c/Users/me`) find `C:\Users\me`.
 - On macOS, a screenshot name such as `Screenshot 2024-01-01 at 10.00.00 AM.png` has a narrow no-break space before `AM` or `PM`. A normal space in the path also finds the file.
 - A file name in decomposed Unicode form (NFD) matches when you type it in composed form.
 - A file name with a curly apostrophe (`’`) matches when you type a straight apostrophe (`'`).
@@ -168,6 +175,7 @@ Example, for a limit of 50 MiB:
 ## Limits
 
 - A path without quotes or backslashes ends at the first space if its line has other text. In `see /Users/me/My File.png`, pi-media looks for `/Users/me/My`, and no file attaches.
+- On Windows, a path without quotes that has `\'` for an apostrophe does not attach, for example `don\'t.png`. The mintty terminal of Git Bash can write a path in this form.
 - Audio, video and PDF files do not attach to a message that pi expands from a skill (`/skill:name`) or a prompt template (`/name`). Images attach.
 - pi-media stores the files of a message in a session entry of its own, and finds that entry by the message text. Each message gets the files of one entry at most. If a message does not reach the session, for example when you clear the message queue or edit a message in the session tree, its entry stays unused. A later message with the same text that attaches no files of its own then gets the files of that entry.
 - pi-media marks the place of a file in a request with text of the form `[[pi-media:<id>:<number>]]`. If your message or a tool result ends with lines that hold only text of this form, pi-media can remove these lines from the request.
