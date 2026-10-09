@@ -1,3 +1,4 @@
+import type { FunctionResponsePart, Part } from "@google/genai";
 import { isRecord } from "../is-record.ts";
 import { takeMarkers } from "../marker.ts";
 import type { Attachment } from "../media-entry.ts";
@@ -15,10 +16,10 @@ const userContents: HolderList = {
 	selects: (content) => content.role === "user",
 	content: "parts",
 	textOf: (part) => (isRecord(part) && typeof part.text === "string" ? part.text : undefined),
-	textNode: (text) => ({ text }),
+	textNode: (text) => ({ text }) satisfies Part,
 };
 
-const inlineData: Build = ({ data, mimeType }) => ({ inlineData: { mimeType, data } });
+const inlineData: Build = ({ data, mimeType }) => ({ inlineData: { mimeType, data } }) satisfies Part & FunctionResponsePart;
 
 // Gemini takes audio, video and PDFs as inlineData parts, in user turns and for tool results.
 const partFor = (mimeType: string) => (isMediaType(mimeType) ? inlineData : undefined);
@@ -98,7 +99,7 @@ function isToolResultImageTurn(content: unknown): content is Record<string, unkn
 }
 
 function fileParts(files: CarriedFile[]) {
-	return [{ text: "Tool result file:" }, ...files.map((file) => file.part)];
+	return [{ text: "Tool result file:" } satisfies Part, ...files.map((file) => file.part)];
 }
 
 function rewriteToolResults(contents: unknown[], attachment: FindAttachment, takesParts: boolean) {

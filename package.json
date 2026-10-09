@@ -40,10 +40,14 @@
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1127.0",
     "@biomejs/biome": "^2.5.15",
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
+    "@google/genai": "^2.21.0",
     "@types/node": "^22",
+    "openai": "^7.19.0",
     "typescript": "^5"
   },
   "keywords": [

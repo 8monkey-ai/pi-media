@@ -1,13 +1,17 @@
+import type { DocumentBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { isRecord } from "../is-record.ts";
 import type { FindAttachment } from "./adapter.ts";
 import { type Build, builderIn, carriesBy } from "./part-for.ts";
 import { registerAdapter } from "./registry.ts";
 import { type HolderList, rewriteHolders, textBlocks } from "./text-holders.ts";
 
-const documentBlock: Build = ({ data, mimeType }) => ({
-	type: "document",
-	source: { type: "base64", media_type: mimeType, data },
-});
+type ToolResultContent = Exclude<ToolResultBlockParam["content"], string | undefined>[number];
+
+const documentBlock: Build = ({ data }) =>
+	({
+		type: "document",
+		source: { type: "base64", media_type: "application/pdf", data },
+	}) satisfies DocumentBlockParam & ToolResultContent;
 
 // Messages takes PDFs as document blocks, in user messages and in tool results.
 const partFor = (mimeType: string) => (mimeType === "application/pdf" ? documentBlock : undefined);

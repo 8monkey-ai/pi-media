@@ -16,6 +16,7 @@ const audioFormats = new Map([
 
 const videoTypes = new Set(["video/mp4", "video/mpeg", "video/webm"]);
 
+// The OpenAI SDK has no type for `video_url` parts.
 const videoUrlPart: Build = ({ mimeType, data }) => ({
 	type: "video_url",
 	video_url: { url: `data:${mimeType};base64,${data}` },

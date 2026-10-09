@@ -1,18 +1,26 @@
 import { basename } from "node:path";
+import type { ChatCompletionContentPart, ChatCompletionContentPartInputAudio } from "openai/resources/chat/completions";
 import { isRecord } from "../is-record.ts";
 import { takeMarkers } from "../marker.ts";
 import type { FindAttachment } from "./adapter.ts";
 import { type Build, builderIn, type PartFor } from "./part-for.ts";
 import { buildParts, type Holder, type HolderList, rewriteHolders, textBlocks } from "./text-holders.ts";
 
-const pdfFilePart: Build = ({ path, data }) => ({
-	type: "file",
-	file: { filename: basename(path), file_data: `data:application/pdf;base64,${data}` },
-});
+const pdfFilePart: Build = ({ path, data }) =>
+	({
+		type: "file",
+		file: { filename: basename(path), file_data: `data:application/pdf;base64,${data}` },
+	}) satisfies ChatCompletionContentPart.File;
+
+// OpenRouter takes more audio formats than the SDK type lists, so `format` is any string here.
+type InputAudioPart = Omit<ChatCompletionContentPartInputAudio, "input_audio"> & {
+	input_audio: Omit<ChatCompletionContentPartInputAudio.InputAudio, "format"> & { format: string };
+};
 
 const inputAudioPart =
 	(format: string): Build =>
-	({ data }) => ({ type: "input_audio", input_audio: { data, format } });
+	({ data }) =>
+		({ type: "input_audio", input_audio: { data, format } }) satisfies InputAudioPart;
 
 // Chat Completions takes PDFs as file parts and audio as input_audio parts. `audioFormats` maps the audio MIME types
 // that the provider accepts to their format names.

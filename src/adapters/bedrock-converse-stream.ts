@@ -1,4 +1,5 @@
 import { parse } from "node:path";
+import type { AudioFormat, ContentBlock, ToolResultContentBlock, VideoFormat } from "@aws-sdk/client-bedrock-runtime";
 import { isRecord } from "../is-record.ts";
 import type { Attachment } from "../media-entry.ts";
 import type { FindAttachment, Place } from "./adapter.ts";
@@ -10,11 +11,11 @@ import { type Holder, rewriteHolder, type TextShape } from "./text-holders.ts";
 const converseText: TextShape = {
 	content: "content",
 	textOf: (node) => (isRecord(node) && typeof node.text === "string" ? node.text : undefined),
-	textNode: (text) => ({ text }),
+	textNode: (text) => ({ text }) satisfies ContentBlock.TextMember & ToolResultContentBlock.TextMember,
 };
 
 // Converse format strings for the MIME types that file-type detects.
-const videoFormats = new Map([
+const videoFormats = new Map<string, VideoFormat>([
 	["video/mp4", "mp4"],
 	["video/quicktime", "mov"],
 	["video/webm", "webm"],
@@ -23,7 +24,7 @@ const videoFormats = new Map([
 	["video/mpeg", "mpeg"],
 	["video/3gpp", "three_gp"],
 ]);
-const audioFormats = new Map([
+const audioFormats = new Map<string, AudioFormat>([
 	["audio/mpeg", "mp3"],
 	["audio/wav", "wav"],
 	["audio/flac", "flac"],
@@ -63,17 +64,22 @@ type Block = (attachment: Attachment, used: Set<string>) => unknown;
 
 const source = (data: string) => ({ bytes: new Uint8Array(Buffer.from(data, "base64")) });
 
-const documentBlock: Block = ({ path, data }, used) => ({
-	document: { format: "pdf", name: uniqueName(documentName(path), used), source: source(data) },
-});
+const documentBlock: Block = ({ path, data }, used) =>
+	({
+		document: { format: "pdf", name: uniqueName(documentName(path), used), source: source(data) },
+	}) satisfies ContentBlock.DocumentMember & ToolResultContentBlock.DocumentMember;
 
 // A Converse tool result has document and video blocks, but no audio block.
 function partFor(mimeType: string, place: Place): Block | undefined {
 	if (mimeType === "application/pdf") return documentBlock;
 	const video = videoFormats.get(mimeType);
-	if (video) return ({ data }) => ({ video: { format: video, source: source(data) } });
+	if (video) {
+		return ({ data }) =>
+			({ video: { format: video, source: source(data) } }) satisfies ContentBlock.VideoMember &
+				ToolResultContentBlock.VideoMember;
+	}
 	const audio = place === "user" ? audioFormats.get(mimeType) : undefined;
-	if (audio) return ({ data }) => ({ audio: { format: audio, source: source(data) } });
+	if (audio) return ({ data }) => ({ audio: { format: audio, source: source(data) } }) satisfies ContentBlock.AudioMember;
 	return undefined;
 }
 
@@ -85,7 +91,10 @@ function withText(message: Holder) {
 	if (!Array.isArray(content) || content.some((node) => converseText.textOf(node) !== undefined)) return message;
 	const first = content.findIndex(isDocument);
 	if (first === -1) return message;
-	return { ...message, content: content.toSpliced(first, 0, { text: content[first].document.name }) };
+	return {
+		...message,
+		content: content.toSpliced(first, 0, { text: content[first].document.name } satisfies ContentBlock.TextMember),
+	};
 }
 
 function rewriteToolResults(message: Holder, attachment: FindAttachment, build: Build) {
