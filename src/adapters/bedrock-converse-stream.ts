@@ -1,9 +1,10 @@
 import { parse } from "node:path";
+import { isRecord } from "../is-record.ts";
 import type { Attachment } from "../media-entry.ts";
-import type { FindAttachment } from "./adapter.ts";
-import { type Build, carriesBy, type Place } from "./part-for.ts";
+import type { FindAttachment, Place } from "./adapter.ts";
+import { type Build, carriesBy } from "./part-for.ts";
 import { registerAdapter } from "./registry.ts";
-import { type Holder, isRecord, rewriteHolder, type TextShape } from "./text-holders.ts";
+import { type Holder, rewriteHolder, type TextShape } from "./text-holders.ts";
 
 // A Converse user message and a Converse tool result both keep their text blocks in `content`.
 const converseText: TextShape = {

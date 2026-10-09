@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 import { findLocalMedia } from "../src/media.ts";
-import { fixtureDir, MP3_BYTES, MP4_BYTES, PNG_BYTES, WAV_BYTES } from "./fixtures.ts";
+import { fixtureDir, MP3_BYTES, MP4_BYTES, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
 
-const PNG_IMAGE = { type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ", mimeType: "image/png" };
 const NOTHING = { images: [], attachments: [] };
 
 function findMedia(text: string, cwd: string) {

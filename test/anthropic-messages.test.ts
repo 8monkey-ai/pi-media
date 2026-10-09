@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Message, Model } from "@earendil-works/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/anthropic-messages";
 import "../src/adapters/anthropic-messages.ts";
 import {
@@ -9,9 +9,11 @@ import {
 	assistantOf,
 	capturePayload,
 	find,
+	messagesOf,
 	pdfNote,
 	pdfRead,
 	readTurn,
+	testModel,
 	text,
 	readResult as toolResult,
 	user,
@@ -24,18 +26,14 @@ const rewrite = (payload: unknown) => adapter.rewrite(payload, find);
 const pdfBlock = { type: "document", source: { type: "base64", media_type: "application/pdf", data: "JVBERi0xLjQ=" } };
 const cache = { cache_control: { type: "ephemeral" } };
 
-const model: Model<"anthropic-messages"> = {
+const model = testModel("anthropic-messages", {
 	id: "claude-test",
 	name: "Claude test",
-	api: "anthropic-messages",
 	provider: "anthropic",
 	baseUrl: "https://api.anthropic.com",
-	reasoning: false,
-	input: ["text", "image"],
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	contextWindow: 200000,
 	maxTokens: 1000,
-};
+});
 
 const payloadFor = async (messages: Message[]) =>
 	(await capturePayload(stream, model, messages, { apiKey: "sk-ant-test" })) as { messages: unknown[] };
@@ -74,28 +72,26 @@ test("replaces the marker block with a document block and moves the cache marker
 
 test("removes markers of audio and video and moves the cache marker to the typed text", async () => {
 	const payload = await payloadFor([user([text("hear @a.mp3 @clip.mp4"), text("[[pi-media:e1:1]]"), text("[[pi-media:e1:2]]")])]);
-	assert.deepEqual((rewrite(payload) as { messages: unknown }).messages, [
+	assert.deepEqual(messagesOf(rewrite(payload)), [
 		{ role: "user", content: [{ type: "text", text: "hear @a.mp3 @clip.mp4", ...cache }] },
 	]);
 });
 
 test("removes a marker whose attachment is missing", async () => {
 	const payload = await payloadFor([user([text("hi"), text("[[pi-media:gone:0]]"), text("[[pi-media:e1:7]]")])]);
-	assert.deepEqual((rewrite(payload) as { messages: unknown }).messages, [
-		{ role: "user", content: [{ type: "text", text: "hi", ...cache }] },
-	]);
+	assert.deepEqual(messagesOf(rewrite(payload)), [{ role: "user", content: [{ type: "text", text: "hi", ...cache }] }]);
 });
 
 test("keeps the cache marker on a last block that is not a marker", async () => {
 	const payload = await payloadFor([user([text("[[pi-media:e1:0]]"), text("then this")])]);
-	assert.deepEqual((rewrite(payload) as { messages: unknown }).messages, [
+	assert.deepEqual(messagesOf(rewrite(payload)), [
 		{ role: "user", content: [pdfBlock, { type: "text", text: "then this", ...cache }] },
 	]);
 });
 
 test("replaces the marker lines at the end of string content", async () => {
 	const payload = await payloadFor([user("read this\n[[pi-media:e1:0]]"), assistant([text("ok")]), user("next")]);
-	assert.deepEqual((rewrite(payload) as { messages: unknown }).messages, [
+	assert.deepEqual(messagesOf(rewrite(payload)), [
 		{ role: "user", content: [{ type: "text", text: "read this" }, pdfBlock] },
 		{ role: "assistant", content: [{ type: "text", text: "ok" }] },
 		{ role: "user", content: [{ type: "text", text: "next", ...cache }] },
@@ -122,7 +118,7 @@ const readPdf = (marker: string) => readTurn(assistant, toolResult("t1", pdfRead
 
 test("puts the PDF of a read tool result in the tool_result content and keeps its cache marker", async () => {
 	const payload = await payloadFor(readPdf("[[pi-media:e1:0]]"));
-	assert.deepEqual((rewrite(payload) as { messages: unknown[] }).messages[2], {
+	assert.deepEqual(messagesOf(rewrite(payload))[2], {
 		role: "user",
 		content: [
 			{
@@ -139,7 +135,7 @@ test("puts the PDF of a read tool result in the tool_result content and keeps it
 test("replaces a marker block in tool_result content that pi-ai keeps as blocks because of an image", async () => {
 	const image = { type: "image" as const, mimeType: "image/png", data: "iVBORw0=" };
 	const payload = await payloadFor(readTurn(assistant, toolResult("t1", [text(pdfNote), image, text("[[pi-media:e1:0]]")])));
-	assert.deepEqual((rewrite(payload) as { messages: unknown[] }).messages[2], {
+	assert.deepEqual(messagesOf(rewrite(payload))[2], {
 		role: "user",
 		content: [
 			{
@@ -160,7 +156,7 @@ test("replaces a marker block in tool_result content that pi-ai keeps as blocks 
 test("removes a tool result marker whose kind is not carried or whose attachment is missing, and keeps the note", async () => {
 	for (const marker of ["[[pi-media:e1:1]]", "[[pi-media:e1:2]]", "[[pi-media:gone:0]]"]) {
 		const payload = await payloadFor(readPdf(marker));
-		assert.deepEqual((rewrite(payload) as { messages: unknown[] }).messages[2], {
+		assert.deepEqual(messagesOf(rewrite(payload))[2], {
 			role: "user",
 			content: [
 				{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: pdfNote }], is_error: false, ...cache },
@@ -180,7 +176,7 @@ test("takes only the marker lines at the end of a tool result", async () => {
 	const payload = await payloadFor(
 		readTurn(assistant, toolResult("t1", [text("first\n[[pi-media:abc:0]]\nlast"), text("[[pi-media:e1:0]]")])),
 	);
-	assert.deepEqual((rewrite(payload) as { messages: unknown[] }).messages[2], {
+	assert.deepEqual(messagesOf(rewrite(payload))[2], {
 		role: "user",
 		content: [
 			{
@@ -209,8 +205,8 @@ test("rewrites one of two tool results in a row, and a user message marker in th
 		assistant([text("done")]),
 		user("thanks"),
 	]);
-	const result = assertPureRewrite(adapter, payload, find) as { messages: unknown[] };
-	assert.deepEqual(result.messages, [
+	const result = messagesOf(assertPureRewrite(adapter, payload, find));
+	assert.deepEqual(result, [
 		{ role: "user", content: [{ type: "text", text: "see @doc.pdf" }, pdfBlock] },
 		{
 			role: "assistant",
@@ -230,16 +226,16 @@ test("rewrites one of two tool results in a row, and a user message marker in th
 		{ role: "user", content: [{ type: "text", text: "thanks", ...cache }] },
 	]);
 	const toolResults = (message: unknown) => (message as { content: unknown[] }).content;
-	assert.equal(toolResults(result.messages[2])[1], toolResults(payload.messages[2])[1]);
-	assert.equal(result.messages[1], payload.messages[1]);
-	assert.equal(result.messages[4], payload.messages[4]);
+	assert.equal(toolResults(result[2])[1], toolResults(payload.messages[2])[1]);
+	assert.equal(result[1], payload.messages[1]);
+	assert.equal(result[4], payload.messages[4]);
 });
 
 test("keeps untouched messages by reference and gives the same result each time", async () => {
 	const payload = await payloadFor([user("hello"), assistant([text("hi")]), user([text("see"), text("[[pi-media:e1:0]]")])]);
-	const first = assertPureRewrite(adapter, payload, find) as { messages: unknown[] };
-	assert.equal(first.messages[0], payload.messages[0]);
-	assert.equal(first.messages[1], payload.messages[1]);
+	const first = messagesOf(assertPureRewrite(adapter, payload, find));
+	assert.equal(first[0], payload.messages[0]);
+	assert.equal(first[1], payload.messages[1]);
 	assert.deepEqual(payload.messages[2], {
 		role: "user",
 		content: [

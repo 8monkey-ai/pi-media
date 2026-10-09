@@ -1,10 +1,9 @@
-import type { ContextEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Adapter } from "./adapters/adapter.ts";
 import { mediaForContext } from "./link.ts";
 import { makeMarker } from "./marker.ts";
-import { toolResultAttachment } from "./media-entry.ts";
+import { type Messages, toolResultAttachment } from "./media-entry.ts";
 
-type Messages = ContextEvent["messages"];
 type Carries = Adapter["carries"];
 
 const NOT_IN_REQUEST = "[The API of the current model cannot take this file type. The file content is not in this request.]";
@@ -37,13 +36,13 @@ function toolResultEntryIds(messages: Messages, branch: SessionEntry[]) {
 	let next = 0;
 	return messages.map((message) => {
 		if (message.role !== "toolResult") return undefined;
-		const index = entries.findIndex(
-			(entry, position) =>
-				position >= next && entry.message.timestamp === message.timestamp && entry.message.toolCallId === message.toolCallId,
-		);
-		if (index === -1) return undefined;
-		next = index + 1;
-		return entries[index].id;
+		for (let index = next; index < entries.length; index++) {
+			const entry = entries[index];
+			if (entry.message.timestamp !== message.timestamp || entry.message.toolCallId !== message.toolCallId) continue;
+			next = index + 1;
+			return entry.id;
+		}
+		return undefined;
 	});
 }
 

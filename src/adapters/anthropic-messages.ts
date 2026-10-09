@@ -1,7 +1,8 @@
+import { isRecord } from "../is-record.ts";
 import type { FindAttachment } from "./adapter.ts";
 import { type Build, builderIn, carriesBy } from "./part-for.ts";
 import { registerAdapter } from "./registry.ts";
-import { type HolderList, isRecord, rewriteHolders, textBlocks } from "./text-holders.ts";
+import { type HolderList, rewriteHolders, textBlocks } from "./text-holders.ts";
 
 const documentBlock: Build = ({ data, mimeType }) => ({
 	type: "document",

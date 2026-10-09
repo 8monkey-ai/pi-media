@@ -20,6 +20,12 @@ export const MP4_BYTES = Buffer.concat([
 	Buffer.from("mp42isom"),
 ]);
 
+// The image content that pi gets for PNG_BYTES.
+export const PNG_IMAGE = { type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ", mimeType: "image/png" };
+
+// The Chat Completions part that carries MP3_BYTES.
+export const MP3_PART = { type: "input_audio", input_audio: { data: "//uQRAAAAAA=", format: "mp3" } };
+
 export async function fixtureDir(files: Record<string, string | Buffer>) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-media-"));
 	for (const [name, content] of Object.entries(files)) await writeFile(join(dir, name), content);

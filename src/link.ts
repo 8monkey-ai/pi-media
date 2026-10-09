@@ -1,7 +1,6 @@
-import type { ContextEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { isMediaEntry, type MediaEntry } from "./media-entry.ts";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { isMediaEntry, type MediaEntry, type Messages } from "./media-entry.ts";
 
-type Messages = ContextEvent["messages"];
 type UserContent = Extract<Messages[number], { role: "user" }>["content"];
 
 function firstText(content: UserContent) {
@@ -44,9 +43,11 @@ export function mediaForContext(messages: Messages, branch: SessionEntry[]) {
 	let next = 0;
 	return messages.map((message) => {
 		if (message.role !== "user") return [];
-		const index = users.findIndex((user, position) => position >= next && user.timestamp === message.timestamp);
-		if (index === -1) return [];
-		next = index + 1;
-		return users[index].entries;
+		for (let index = next; index < users.length; index++) {
+			if (users[index].timestamp !== message.timestamp) continue;
+			next = index + 1;
+			return users[index].entries;
+		}
+		return [];
 	});
 }

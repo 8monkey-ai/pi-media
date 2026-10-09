@@ -22,11 +22,13 @@ const mp3Part = { inlineData: { mimeType: "audio/mpeg", data: "//uQRAAAAAA=" } }
 const mp4Part = { inlineData: { mimeType: "video/mp4", data: "AAAAGGZ0eXA=" } };
 const pngPart = { inlineData: { mimeType: "image/png", data: "iVBORw0KGgo=" } };
 
-async function payloadFor(api: string, messages: Message[], modelId = "gemini-2.5-flash") {
+type ModelId = "gemini-2.5-flash" | "gemini-3-flash-preview";
+
+async function payloadFor(api: string, messages: Message[], modelId: ModelId = "gemini-2.5-flash") {
 	const payload =
 		api === "google-generative-ai"
-			? await capturePayload(geminiStream, getModel("google", modelId as "gemini-2.5-flash"), messages, { apiKey: "test" })
-			: await capturePayload(vertexStream, getModel("google-vertex", modelId as "gemini-2.5-flash"), messages, {
+			? await capturePayload(geminiStream, getModel("google", modelId), messages, { apiKey: "test" })
+			: await capturePayload(vertexStream, getModel("google-vertex", modelId), messages, {
 					apiKey: "test",
 					project: "test",
 					location: "us-central1",
@@ -183,7 +185,7 @@ for (const [api, provider] of [
 
 	test(`${api}: removes a tool result marker whose attachment is missing or of a type it does not carry`, async () => {
 		for (const marker of ["[[pi-media:gone:0]]", "[[pi-media:e1:7]]", "[[pi-media:e1:3]]"]) {
-			for (const modelId of ["gemini-2.5-flash", "gemini-3-flash-preview"]) {
+			for (const modelId of ["gemini-2.5-flash", "gemini-3-flash-preview"] as const) {
 				const payload = await payloadFor(api, readContext(pdfRead(marker)), modelId);
 				const result = rewrite(payload) as typeof payload;
 				assert.equal(result.contents.length, 3);
@@ -317,7 +319,7 @@ for (const [api, provider] of [
 	});
 
 	test(`${api}: gives the same tool result output for the same input`, async () => {
-		for (const modelId of ["gemini-2.5-flash", "gemini-3-flash-preview"]) {
+		for (const modelId of ["gemini-2.5-flash", "gemini-3-flash-preview"] as const) {
 			const payload = await payloadFor(api, readContext(pdfRead("[[pi-media:e1:0]]"), pdfRead("[[pi-media:e1:2]]")), modelId);
 			assert.equal(JSON.stringify(assertPureRewrite(adapter, payload, find)), JSON.stringify(rewrite(payload)));
 		}

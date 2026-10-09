@@ -20,11 +20,14 @@ export function takeMarkers(text: string, joined: boolean) {
 		return marker && { text: "", markers: [marker] };
 	}
 	const lines = text.split("\n");
+	const markers = [];
 	let start = lines.length;
-	while (start > 0 && parseMarker(lines[start - 1])) start--;
+	while (start > 0) {
+		const marker = parseMarker(lines[start - 1]);
+		if (!marker) break;
+		markers.unshift(marker);
+		start--;
+	}
 	if (start === lines.length) return undefined;
-	return {
-		text: lines.slice(0, start).join("\n"),
-		markers: lines.slice(start).flatMap((line) => parseMarker(line) ?? []),
-	};
+	return { text: lines.slice(0, start).join("\n"), markers };
 }

@@ -3,12 +3,10 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import extension from "../src/index.ts";
-import { MP3_BYTES } from "./fixtures.ts";
+import { MP3_BYTES, MP3_PART } from "./fixtures.ts";
 import { startSession } from "./session-harness.ts";
 
 // Which user messages a pi-media entry links to, across normal, queued, cleared and branched prompts.
-
-const MP3_PART = { type: "input_audio", input_audio: { data: "//uQRAAAAAA=", format: "mp3" } };
 
 function user(text: string, files = 0) {
 	return { role: "user", content: [{ type: "text", text }, ...Array.from({ length: files }, () => MP3_PART)] };

@@ -1,7 +1,8 @@
 import { basename } from "node:path";
+import { isRecord } from "../is-record.ts";
 import { type Build, builderIn, carriesBy } from "./part-for.ts";
 import { registerAdapter } from "./registry.ts";
-import { type HolderList, isRecord, rewriteHolders, type TextShape } from "./text-holders.ts";
+import { type HolderList, rewriteHolders, type TextShape } from "./text-holders.ts";
 
 const inputText: TextShape = {
 	content: "content",

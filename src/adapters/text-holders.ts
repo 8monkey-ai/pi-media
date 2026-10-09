@@ -1,4 +1,6 @@
+import { isRecord } from "../is-record.ts";
 import { takeMarkers } from "../marker.ts";
+import type { Attachment } from "../media-entry.ts";
 import type { FindAttachment } from "./adapter.ts";
 import type { Build } from "./part-for.ts";
 
@@ -23,10 +25,6 @@ export type HolderList = TextShape & {
 	selects(item: Holder): boolean;
 };
 
-export function isRecord(value: unknown): value is Holder {
-	return !!value && typeof value === "object";
-}
-
 // Text in `content`, as a string or as `{ type: "text", text }` nodes.
 export const textBlocks: TextShape = {
 	content: "content",
@@ -45,18 +43,27 @@ function rewriteContent(content: unknown, shape: TextShape, split: SplitText) {
 	return content.flatMap((node, index) => replaced[index] ?? [node]);
 }
 
-// Replaces the markers in the text of the holder with the parts that `build` builds.
-// A marker is removed when its attachment is missing or `build` returns undefined, because the API cannot carry it.
-// Returns undefined when the holder has no marker.
+// Returns the parts that `build` builds for the attachments of the markers. A marker gives no part when its attachment
+// is missing or `build` returns undefined, because the API cannot carry it.
+export function buildParts<Part>(
+	markers: { entryId: string; index: number }[],
+	attachment: FindAttachment,
+	build: (attachment: Attachment) => Part | undefined,
+) {
+	return markers.flatMap(({ entryId, index }): Part[] => {
+		const found = attachment(entryId, index);
+		const built = found && build(found);
+		return built === undefined ? [] : [built];
+	});
+}
+
+// Replaces the markers in the text of the holder with the parts that `build` builds, and removes the markers that
+// give no part. Returns undefined when the holder has no marker.
 export function rewriteHolder(holder: Holder, shape: TextShape, attachment: FindAttachment, build: Build): Holder | undefined {
 	const split: SplitText = (text, joined) => {
 		const taken = takeMarkers(text, joined);
 		if (!taken) return undefined;
-		const parts = taken.markers.flatMap(({ entryId, index }) => {
-			const found = attachment(entryId, index);
-			const built = found && build(found);
-			return built === undefined ? [] : [built];
-		});
+		const parts = buildParts(taken.markers, attachment, build);
 		return taken.text ? [shape.textNode(taken.text), ...parts] : parts;
 	};
 	const before = holder[shape.content];

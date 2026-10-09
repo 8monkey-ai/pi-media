@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Message, Model } from "@earendil-works/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/bedrock-converse-stream";
 import "../src/adapters/bedrock-converse-stream.ts";
 import {
@@ -10,8 +10,10 @@ import {
 	capturePayload,
 	find,
 	findIn,
+	messagesOf,
 	pdfNote,
 	readTurn,
+	testModel,
 	text,
 	readResult as toolResultOf,
 	user as userOf,
@@ -28,18 +30,14 @@ const mp3Block = { audio: { format: "mp3", source: { bytes: new Uint8Array([0xff
 const mp4Block = { video: { format: "mp4", source: { bytes: new Uint8Array([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70]) } } };
 const cachePoint = { cachePoint: { type: "default" } };
 
-const model: Model<"bedrock-converse-stream"> = {
+const model = testModel("bedrock-converse-stream", {
 	id: "anthropic.claude-sonnet-4-5-20250929-v1:0",
 	name: "Claude Sonnet 4.5",
-	api: "bedrock-converse-stream",
 	provider: "amazon-bedrock",
 	baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
-	reasoning: false,
-	input: ["text", "image"],
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	contextWindow: 200000,
 	maxTokens: 1000,
-};
+});
 
 // The Claude model makes pi-ai add a cache point to the last user message.
 const payloadFor = async (messages: Message[]) =>
@@ -92,7 +90,7 @@ test("replaces marker blocks before the cache point with document, audio and vid
 			],
 		},
 	]);
-	assert.deepEqual((rewrite(payload) as typeof payload).messages, [
+	assert.deepEqual(messagesOf(rewrite(payload)), [
 		{ role: "user", content: [{ text: "see /gone/doc.pdf" }, docBlock("doc"), mp3Block, mp4Block, cachePoint] },
 	]);
 });
@@ -147,8 +145,8 @@ test("gives each document in the request a different name, in message order", as
 			content: [{ text: "again /gone/doc.pdf /other/doc.pdf" }, docBlock("doc (2)"), docBlock("doc (3)"), cachePoint],
 		},
 	];
-	assert.deepEqual((rewrite(payload) as typeof payload).messages, expected);
-	assert.deepEqual((rewrite(payload) as typeof payload).messages, expected);
+	assert.deepEqual(messagesOf(rewrite(payload)), expected);
+	assert.deepEqual(messagesOf(rewrite(payload)), expected);
 });
 
 test("adds the text block that a message with a document needs when the message has no text", async () => {
@@ -157,7 +155,7 @@ test("adds the text block that a message with a document needs when the message 
 		assistant([{ type: "text", text: "ok" }]),
 		user("[[pi-media:e1:0]]"),
 	]);
-	assert.deepEqual((rewrite(payload) as typeof payload).messages, [
+	assert.deepEqual(messagesOf(rewrite(payload)), [
 		{ role: "user", content: [mp4Block] },
 		{ role: "assistant", content: [{ text: "ok" }] },
 		{ role: "user", content: [{ text: "doc" }, docBlock("doc"), cachePoint] },
@@ -168,9 +166,7 @@ test("removes a marker whose attachment is missing or of a type it does not carr
 	const payload = await payloadFor([
 		user("look at /gone/shot.heic", "[[pi-media:gone:0]]", "[[pi-media:e1:7]]", "[[pi-media:e1:3]]"),
 	]);
-	assert.deepEqual((rewrite(payload) as typeof payload).messages, [
-		{ role: "user", content: [{ text: "look at /gone/shot.heic" }, cachePoint] },
-	]);
+	assert.deepEqual(messagesOf(rewrite(payload)), [{ role: "user", content: [{ text: "look at /gone/shot.heic" }, cachePoint] }]);
 });
 
 test("carries PDFs and video in tool results, and not audio", () => {
@@ -203,19 +199,19 @@ test("replaces a tool result marker with a document block and keeps the cache po
 		role: "user",
 		content: [toolResult("t1", { text: pdfNote }, { text: "[[pi-media:e1:0]]" }), cachePoint],
 	});
-	const result = adapter.rewrite(payload, readOf("application/pdf")) as typeof payload;
-	assert.deepEqual(result.messages[2], {
+	const result = messagesOf(adapter.rewrite(payload, readOf("application/pdf")));
+	assert.deepEqual(result[2], {
 		role: "user",
 		content: [toolResult("t1", { text: pdfNote }, docBlock("report")), cachePoint],
 	});
-	assert.equal(result.messages[0], payload.messages[0]);
-	assert.equal(result.messages[1], payload.messages[1]);
+	assert.equal(result[0], payload.messages[0]);
+	assert.equal(result[1], payload.messages[1]);
 });
 
 test("replaces a tool result marker with a video block", async () => {
 	const payload = await readPayload();
-	const result = adapter.rewrite(payload, readOf("video/mp4", "/tmp/x/clip.mp4")) as typeof payload;
-	assert.deepEqual(result.messages[2], {
+	const result = messagesOf(adapter.rewrite(payload, readOf("video/mp4", "/tmp/x/clip.mp4")));
+	assert.deepEqual(result[2], {
 		role: "user",
 		content: [toolResult("t1", { text: pdfNote }, { video: { format: "mp4", source: { bytes: pdfBytes } } }), cachePoint],
 	});
@@ -224,8 +220,8 @@ test("replaces a tool result marker with a video block", async () => {
 test("removes a tool result marker whose attachment is missing or of a type it does not carry, and keeps the note", async () => {
 	const payload = await readPayload();
 	const expected = { role: "user", content: [toolResult("t1", { text: pdfNote }), cachePoint] };
-	assert.deepEqual((adapter.rewrite(payload, readOf("audio/mpeg")) as typeof payload).messages[2], expected);
-	assert.deepEqual((adapter.rewrite(payload, () => undefined) as typeof payload).messages[2], expected);
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, readOf("audio/mpeg")))[2], expected);
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, () => undefined))[2], expected);
 });
 
 test("changes only the tool result with media when two tool results come in a row", async () => {
@@ -242,12 +238,12 @@ test("changes only the tool result with media when two tool results come in a ro
 		readResult("t2", "plain text"),
 	]);
 	const before = payload.messages[2] as { content: unknown[] };
-	const result = adapter.rewrite(payload, readOf("application/pdf")) as typeof payload;
-	assert.deepEqual(result.messages[2], {
+	const result = messagesOf(adapter.rewrite(payload, readOf("application/pdf")));
+	assert.deepEqual(result[2], {
 		role: "user",
 		content: [toolResult("t1", { text: pdfNote }, docBlock("report")), toolResult("t2", { text: "plain text" }), cachePoint],
 	});
-	assert.equal((result.messages[2] as { content: unknown[] }).content[1], before.content[1]);
+	assert.equal((result[2] as { content: unknown[] }).content[1], before.content[1]);
 });
 
 test("names documents in user messages and tool results in message order, the same way each time", async () => {
@@ -267,7 +263,7 @@ test("names documents in user messages and tool results in message order, the sa
 		{ role: "assistant", content: [{ text: "ok" }] },
 		{ role: "user", content: [{ text: "and /other/doc.pdf" }, docBlock("doc (3)"), cachePoint] },
 	];
-	assert.deepEqual((assertPureRewrite(adapter, payload, find) as typeof payload).messages, expected);
+	assert.deepEqual(messagesOf(assertPureRewrite(adapter, payload, find)), expected);
 });
 
 test("leaves user and tool result text that only contains a marker", async () => {
@@ -287,10 +283,10 @@ test("leaves markers in assistant messages", async () => {
 
 test("keeps untouched messages by reference", async () => {
 	const payload = await payloadFor([user("hello"), assistant([{ type: "text", text: "hi" }]), user("[[pi-media:e1:2]]")]);
-	const result = rewrite(payload) as typeof payload;
-	assert.equal(result.messages[0], payload.messages[0]);
-	assert.equal(result.messages[1], payload.messages[1]);
-	assert.deepEqual(result.messages[2], { role: "user", content: [mp4Block, cachePoint] });
+	const result = messagesOf(rewrite(payload));
+	assert.equal(result[0], payload.messages[0]);
+	assert.equal(result[1], payload.messages[1]);
+	assert.deepEqual(result[2], { role: "user", content: [mp4Block, cachePoint] });
 });
 
 test("passes through payloads without a message list", () => {

@@ -8,10 +8,15 @@ import {
 	assertPureRewrite,
 	assistantOf,
 	capturePayload,
+	contentOf,
 	findIn,
+	marker,
+	messagesOf,
+	pdfFilePart,
 	pdfNote,
 	pdfRead,
 	readTurn as readTurnOf,
+	testModel,
 	readResult as toolResult,
 } from "./pi-payload.ts";
 
@@ -30,7 +35,6 @@ const find = findIn({
 });
 const rewrite = (payload: unknown) => adapter.rewrite(payload, find);
 
-const pdfPart = { type: "file", file: { filename: "doc.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } };
 const mp3Part = { type: "input_audio", input_audio: { data: "//uQRAAAAAA=", format: "mp3" } };
 const wavPart = { type: "input_audio", input_audio: { data: "UklGRiQAAAA=", format: "wav" } };
 
@@ -39,19 +43,7 @@ type ModelOptions = { provider?: string; id?: string; compat?: Model<"openai-com
 
 // Builds the request body with pi-ai's own converter and stops before any network call.
 async function piMessagesPayload(messages: Message[], { provider = "openai", id = "gpt-4o", compat }: ModelOptions = {}) {
-	const model: Model<"openai-completions"> = {
-		id,
-		name: id,
-		api: "openai-completions",
-		provider,
-		baseUrl: "http://127.0.0.1:9",
-		reasoning: false,
-		input: ["text", "image"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 1000,
-		maxTokens: 100,
-		compat,
-	};
+	const model = testModel("openai-completions", { id, provider, baseUrl: "http://127.0.0.1:9", compat });
 	return (await capturePayload(stream, model, messages, { apiKey: "test" })) as { messages: Record<string, unknown>[] };
 }
 
@@ -60,9 +52,6 @@ const piPayload = (users: UserContent[], options?: ModelOptions) =>
 		users.map((content, index) => ({ role: "user", content, timestamp: index })),
 		options,
 	);
-
-const marker = (index: number) => ({ type: "text" as const, text: `[[pi-media:e1:${index}]]` });
-const contentOf = (payload: unknown) => (payload as { messages: { content: unknown }[] }).messages.map((m) => m.content);
 
 test("carries PDFs, wav and mp3 in user messages and tool results, and no other types", () => {
 	assert.deepEqual(
@@ -95,7 +84,7 @@ test("replaces marker blocks with file and input_audio parts and keeps images an
 		[
 			{ type: "text", text: "see @doc.pdf" },
 			{ type: "image_url", image_url: { url: "data:image/png;base64,xx" } },
-			pdfPart,
+			pdfFilePart,
 			mp3Part,
 			wavPart,
 		],
@@ -104,7 +93,7 @@ test("replaces marker blocks with file and input_audio parts and keeps images an
 
 test("replaces the marker lines at the end of string content", async () => {
 	const payload = await piPayload(["read this\n[[pi-media:e1:0]]\n[[pi-media:e1:1]]", "hi"]);
-	assert.deepEqual(contentOf(rewrite(payload)), [[{ type: "text", text: "read this" }, pdfPart, mp3Part], "hi"]);
+	assert.deepEqual(contentOf(rewrite(payload)), [[{ type: "text", text: "read this" }, pdfFilePart, mp3Part], "hi"]);
 });
 
 test("leaves user text that only contains a marker", async () => {
@@ -142,7 +131,7 @@ test("keeps the cache marker on the last text part when the marker block that he
 	]);
 	assert.deepEqual(contentOf(rewrite(payload)), [
 		[{ type: "text", text: "earlier @a.mp3" }, mp3Part],
-		[{ type: "text", text: "see @doc.pdf", cache_control: { type: "ephemeral" } }, pdfPart],
+		[{ type: "text", text: "see @doc.pdf", cache_control: { type: "ephemeral" } }, pdfFilePart],
 	]);
 });
 
@@ -159,12 +148,10 @@ test("leaves markers in assistant and system messages", () => {
 test("keeps untouched messages by reference", () => {
 	const system = { role: "system", content: "sys" };
 	const earlier = { role: "user", content: [{ type: "text", text: "hello" }] };
-	const result = rewrite({ messages: [system, earlier, { role: "user", content: "[[pi-media:e1:0]]" }] }) as {
-		messages: unknown[];
-	};
-	assert.equal(result.messages[0], system);
-	assert.equal(result.messages[1], earlier);
-	assert.deepEqual(result.messages[2], { role: "user", content: [pdfPart] });
+	const result = messagesOf(rewrite({ messages: [system, earlier, { role: "user", content: "[[pi-media:e1:0]]" }] }));
+	assert.equal(result[0], system);
+	assert.equal(result[1], earlier);
+	assert.deepEqual(result[2], { role: "user", content: [pdfFilePart] });
 });
 
 test("returns undefined when no user message has a marker", () => {
@@ -190,7 +177,6 @@ const readTurn = (...results: ToolResultMessage[]) =>
 
 const pdf = { path: "/tmp/x/report.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" };
 const reportPart = { type: "file", file: { filename: "report.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } };
-const messagesOf = (payload: unknown) => (payload as { messages: unknown[] }).messages;
 
 test("pi-ai joins the note and the marker of a tool result into one string", async () => {
 	const payload = await piMessagesPayload(readTurn(readPdf()));

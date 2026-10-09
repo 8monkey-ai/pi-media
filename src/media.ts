@@ -3,6 +3,7 @@ import { detectSupportedImageMimeTypeFromFile, type InputEvent } from "@earendil
 import { fileTypeFromFile } from "file-type";
 import { findPathCandidates } from "./find-paths.ts";
 import type { Attachment } from "./media-entry.ts";
+import { isMediaType } from "./media-type.ts";
 import { resolveExistingPath } from "./resolve-path.ts";
 
 type ImageContent = NonNullable<InputEvent["images"]>[number];
@@ -16,10 +17,6 @@ async function fileSize(path: string) {
 	}
 }
 
-function isMediaType(mimeType: string) {
-	return mimeType.startsWith("audio/") || mimeType.startsWith("video/") || mimeType === "application/pdf";
-}
-
 // Images go to pi's own image handling, so pi's detector decides what an image is.
 async function detectType(path: string) {
 	const imageType = await detectSupportedImageMimeTypeFromFile(path);
@@ -31,13 +28,14 @@ async function detectType(path: string) {
 // The type detectors read only the start of the file, so a large file costs no more than a small one.
 export async function findMediaFile(mention: string, cwd: string) {
 	const path = await resolveExistingPath(mention, cwd);
-	const size = path ? await fileSize(path) : 0;
-	if (!path || size === 0) return undefined;
+	if (!path) return undefined;
+	const size = await fileSize(path);
+	if (size === 0) return undefined;
 	const type = await detectType(path).catch(() => undefined);
 	return type && { path, size, ...type };
 }
 
-export async function readAttachment(path: string, mimeType: string): Promise<Attachment> {
+export async function readAttachment(path: string, mimeType: string) {
 	return { path, mimeType, data: (await readFile(path)).toString("base64") };
 }
 

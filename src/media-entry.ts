@@ -1,4 +1,5 @@
 import type { ContextEvent, CustomEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
+import { isRecord } from "./is-record.ts";
 
 export const ENTRY_TYPE = "pi-media";
 
@@ -6,24 +7,24 @@ export type Attachment = { path: string; mimeType: string; data: string };
 export type MediaEntryData = { text: string; attachments: Attachment[] };
 
 export type MediaEntry = CustomEntry & { data: MediaEntryData };
-
-function fieldsOf(value: unknown) {
-	return (value ?? {}) as Record<string, unknown>;
-}
+export type Messages = ContextEvent["messages"];
 
 function isAttachment(value: unknown): value is Attachment {
-	const { path, mimeType, data } = fieldsOf(value);
-	return typeof path === "string" && typeof mimeType === "string" && typeof data === "string";
+	return (
+		isRecord(value) && typeof value.path === "string" && typeof value.mimeType === "string" && typeof value.data === "string"
+	);
 }
 
 export function isMediaEntry(entry: SessionEntry | undefined): entry is MediaEntry {
 	if (entry?.type !== "custom" || entry.customType !== ENTRY_TYPE) return false;
-	const { text, attachments } = fieldsOf(entry.data);
-	return typeof text === "string" && Array.isArray(attachments) && attachments.every(isAttachment);
+	const { data } = entry;
+	return (
+		isRecord(data) && typeof data.text === "string" && Array.isArray(data.attachments) && data.attachments.every(isAttachment)
+	);
 }
 
 // pi-media's read tool keeps the attachment of a media file in the `details` of its tool result.
-export function toolResultAttachment(message: ContextEvent["messages"][number]) {
+export function toolResultAttachment(message: Messages[number]) {
 	return message.role === "toolResult" && message.toolName === "read" && isAttachment(message.details)
 		? message.details
 		: undefined;

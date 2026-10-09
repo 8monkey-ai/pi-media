@@ -14,6 +14,23 @@ import type { Adapter, FindAttachment } from "../src/adapters/adapter.ts";
 import { findAdapter } from "../src/adapters/registry.ts";
 import type { Attachment } from "../src/media-entry.ts";
 
+// A chat model without cost and without reasoning, with its id as its name unless `overrides` gives one.
+export function testModel<TApi extends Api>(
+	api: TApi,
+	overrides: Pick<Model<TApi>, "id" | "provider" | "baseUrl"> & Partial<Model<TApi>>,
+): Model<TApi> {
+	return {
+		name: overrides.id,
+		reasoning: false,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1000,
+		maxTokens: 100,
+		...overrides,
+		api,
+	};
+}
+
 export function adapterFor(model: { api: string; provider: string }) {
 	const adapter = findAdapter(model);
 	assert.ok(adapter);
@@ -67,6 +84,16 @@ export const findIn =
 export const find = findIn(attachments);
 
 export const text = (value: string) => ({ type: "text" as const, text: value });
+
+// The marker block of attachment `index` of entry `e1`.
+export const marker = (index: number) => text(`[[pi-media:e1:${index}]]`);
+
+export const messagesOf = (payload: unknown) => (payload as { messages: unknown[] }).messages;
+
+export const contentOf = (payload: unknown) => (payload as { messages: { content: unknown }[] }).messages.map((m) => m.content);
+
+// The Chat Completions file part for `/gone/doc.pdf`.
+export const pdfFilePart = { type: "file", file: { filename: "doc.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } };
 
 export const user = (content: UserMessage["content"]): Message => ({ role: "user", content, timestamp: 1 });
 

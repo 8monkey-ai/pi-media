@@ -1,8 +1,9 @@
 import { basename } from "node:path";
+import { isRecord } from "../is-record.ts";
 import { takeMarkers } from "../marker.ts";
 import type { FindAttachment } from "./adapter.ts";
 import { type Build, builderIn, type PartFor } from "./part-for.ts";
-import { type Holder, type HolderList, isRecord, rewriteHolders, textBlocks } from "./text-holders.ts";
+import { buildParts, type Holder, type HolderList, rewriteHolders, textBlocks } from "./text-holders.ts";
 
 const pdfFilePart: Build = ({ path, data }) => ({
 	type: "file",
@@ -49,12 +50,7 @@ const userMessages: HolderList = {
 function takeToolMarkers(text: string, attachment: FindAttachment, build: Build) {
 	const taken = takeMarkers(text, true);
 	if (!taken) return undefined;
-	const parts = taken.markers.flatMap(({ entryId, index }) => {
-		const found = attachment(entryId, index);
-		const built = found && build(found);
-		return built === undefined ? [] : [built];
-	});
-	return { text: taken.text, parts };
+	return { text: taken.text, parts: buildParts(taken.markers, attachment, build) };
 }
 
 // Tool message content is a string, or text parts when pi-ai adds a cache marker to it.

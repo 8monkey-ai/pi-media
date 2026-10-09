@@ -1,7 +1,6 @@
 import type { Attachment } from "../media-entry.ts";
-import type { Adapter } from "./adapter.ts";
+import type { Place } from "./adapter.ts";
 
-export type Place = Parameters<Adapter["carries"]>[1];
 export type Build = (attachment: Attachment) => unknown;
 // Returns the builder of the part that carries a file of this type in this place, or undefined when the API cannot carry
 // the file there. Each adapter decides this in one function, and `carries` and the rewrite both follow it.

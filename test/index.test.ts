@@ -5,11 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { type ExtensionFactory, type InputEvent, SessionManager } from "@earendil-works/pi-coding-agent";
 import extension from "../src/index.ts";
-import { MP3_BYTES, PNG_BYTES, WAV_BYTES } from "./fixtures.ts";
+import { MP3_BYTES, MP3_PART, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
 import { startSession } from "./session-harness.ts";
-
-const MP3_PART = { type: "input_audio", input_audio: { data: "//uQRAAAAAA=", format: "mp3" } };
-const PNG_IMAGE = { type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ", mimeType: "image/png" };
 
 // Runs after pi-media and records the input that pi-media passes on.
 function inputObserver() {
