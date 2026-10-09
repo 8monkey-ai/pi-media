@@ -1,90 +1,63 @@
-import { stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { detectSupportedImageMimeTypeFromFile, type InputEvent } from "@earendil-works/pi-coding-agent";
+import { fileTypeFromFile } from "file-type";
+import { findPathCandidates } from "./find-paths.ts";
+import type { Attachment } from "./media-entry.ts";
+import { isMediaType } from "./media-type.ts";
+import { resolveExistingPath } from "./resolve-path.ts";
 
-const MARKER_RE = /\[\[pi-media:([^|\]]+)\|([^|\]]+)\]\]/g;
+type ImageContent = NonNullable<InputEvent["images"]>[number];
 
-// Input types Gemini models accept. Everything else stays plain text for pi's read tool.
-// https://ai.google.dev/gemini-api/docs/generate-content/{image,audio,video,document}-understanding
-const MIME_BY_EXTENSION: Record<string, string> = {
-	png: "image/png",
-	jpg: "image/jpeg",
-	jpeg: "image/jpeg",
-	webp: "image/webp",
-	gif: "image/gif",
-	heic: "image/heic",
-	heif: "image/heif",
-	wav: "audio/wav",
-	mp3: "audio/mpeg",
-	aac: "audio/aac",
-	flac: "audio/flac",
-	ogg: "audio/ogg",
-	aiff: "audio/aiff",
-	aif: "audio/aiff",
-	mp4: "video/mp4",
-	mov: "video/quicktime",
-	webm: "video/webm",
-	mpeg: "video/mpeg",
-	mpg: "video/mpeg",
-	avi: "video/avi",
-	wmv: "video/wmv",
-	flv: "video/x-flv",
-	"3gp": "video/3gpp",
-	pdf: "application/pdf",
-};
-
-// ponytail: files above this are left as plain @paths — base64 in memory would risk an OOM.
-// Raise it, or upload and send a URL instead, if large video matters.
-const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-
-const AT_PATH_RE = /(?:^|[\s([{])@(?:"([^"]+)"|(\S+))/g;
-const TRAILING_PUNCTUATION_RE = /[)\],.;:!?]+$/;
-
-export function makeMarker(path: string, mediaType: string) {
-	return `[[pi-media:${path}|${mediaType}]]`;
-}
-
-function mediaTypeFromExtension(path: string) {
-	return MIME_BY_EXTENSION[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];
-}
-
-async function isAttachable(path: string) {
+async function fileSize(path: string) {
 	try {
 		const stats = await stat(path);
-		return stats.isFile() && stats.size > 0 && stats.size <= MAX_ATTACHMENT_BYTES;
+		return stats.isFile() ? stats.size : 0;
 	} catch {
-		return false;
+		return 0;
 	}
 }
 
-export async function attachLocalMedia(text: string, cwd: string) {
-	let result = "";
-	let last = 0;
-	for (const match of text.matchAll(AT_PATH_RE)) {
-		const quoted = match[1];
-		const trailing = quoted ? "" : (match[2].match(TRAILING_PUNCTUATION_RE)?.[0] ?? "");
-		const mention = quoted ?? match[2].slice(0, match[2].length - trailing.length);
-		const mediaType = mediaTypeFromExtension(mention);
-		if (!mediaType) continue;
-		const path = resolve(cwd, mention);
-		if (!(await isAttachable(path))) continue;
-		result += text.slice(last, match.index + match[0].indexOf("@")) + makeMarker(path, mediaType) + trailing;
-		last = match.index + match[0].length;
-	}
-	return last === 0 ? undefined : result + text.slice(last);
+// Images go to pi's own image handling, so pi's detector decides what an image is.
+async function detectType(path: string) {
+	const imageType = await detectSupportedImageMimeTypeFromFile(path);
+	if (imageType) return { image: true, mimeType: imageType };
+	const mimeType = (await fileTypeFromFile(path))?.mime;
+	return mimeType && isMediaType(mimeType) ? { image: false, mimeType } : undefined;
 }
 
-type MediaSegment = { type: "text"; text: string } | { type: "media"; path: string; mediaType: string };
+// The type detectors read only the start of the file, so a large file costs no more than a small one.
+export async function findMediaFile(mention: string, cwd: string) {
+	const path = await resolveExistingPath(mention, cwd);
+	if (!path) return undefined;
+	const size = await fileSize(path);
+	if (size === 0) return undefined;
+	const type = await detectType(path).catch(() => undefined);
+	return type && { path, size, ...type };
+}
 
-export function splitMarkers(text: string): MediaSegment[] {
-	const segments: MediaSegment[] = [];
-	let last = 0;
-	for (const match of text.matchAll(MARKER_RE)) {
-		const before = text.slice(last, match.index).trim();
-		if (before) segments.push({ type: "text", text: before });
-		segments.push({ type: "media", path: match[1], mediaType: match[2] });
-		last = match.index + match[0].length;
+export async function readAttachment(path: string, mimeType: string) {
+	return { path, mimeType, data: (await readFile(path)).toString("base64") };
+}
+
+export async function findLocalMedia(text: string, cwd: string, maxBytes: number) {
+	let attachedEnd = 0;
+	const attachedPaths = new Set<string>();
+	const images: ImageContent[] = [];
+	const attachments: Attachment[] = [];
+	for (const { start, end, path } of findPathCandidates(text)) {
+		if (start < attachedEnd) continue;
+		const file = await findMediaFile(path, cwd);
+		if (!file || file.size > maxBytes) continue;
+		if (attachedPaths.has(file.path)) {
+			attachedEnd = end;
+			continue;
+		}
+		const attachment = await readAttachment(file.path, file.mimeType).catch(() => undefined);
+		if (!attachment) continue;
+		attachedEnd = end;
+		attachedPaths.add(file.path);
+		if (file.image) images.push({ type: "image", data: attachment.data, mimeType: attachment.mimeType });
+		else attachments.push(attachment);
 	}
-	const after = text.slice(last).trim();
-	if (after) segments.push({ type: "text", text: after });
-	return segments;
+	return { images, attachments };
 }

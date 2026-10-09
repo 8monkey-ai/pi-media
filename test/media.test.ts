@@ -1,62 +1,116 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { attachLocalMedia, makeMarker, splitMarkers } from "../src/media.ts";
+import { findLocalMedia } from "../src/media.ts";
+import { fixtureDir, MP3_BYTES, MP4_BYTES, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
 
-async function fixtureDir(files: Record<string, string>) {
-	const dir = await mkdtemp(join(tmpdir(), "pi-media-"));
-	for (const [name, content] of Object.entries(files)) await writeFile(join(dir, name), content);
-	return dir;
+const NOTHING = { images: [], attachments: [] };
+
+function findMedia(text: string, cwd: string) {
+	return findLocalMedia(text, cwd, 20971520);
 }
 
-test("attaches an @-mentioned media file", async () => {
+test("attaches an @-mentioned PDF with its bytes", async () => {
 	const dir = await fixtureDir({ "report.pdf": "%PDF-1.4" });
-	assert.equal(
-		await attachLocalMedia("summarize @report.pdf please", dir),
-		`summarize ${makeMarker(join(dir, "report.pdf"), "application/pdf")} please`,
-	);
+	assert.deepEqual(await findMedia("summarize @report.pdf please", dir), {
+		images: [],
+		attachments: [{ path: join(dir, "report.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
+	});
 });
 
-test("attaches quoted paths with spaces and multiple mentions", async () => {
-	const dir = await fixtureDir({ "my shot.png": "png", "clip.mp3": "mp3" });
-	assert.equal(
-		await attachLocalMedia('@"my shot.png" and @clip.mp3', dir),
-		`${makeMarker(join(dir, "my shot.png"), "image/png")} and ${makeMarker(join(dir, "clip.mp3"), "audio/mpeg")}`,
-	);
+test("detects audio and video types from the bytes, not the extension", async () => {
+	const dir = await fixtureDir({ "song.dat": MP3_BYTES, "voice.mp3": WAV_BYTES, "clip.bin": MP4_BYTES });
+	assert.deepEqual(await findMedia("@song.dat @voice.mp3 @clip.bin", dir), {
+		images: [],
+		attachments: [
+			{ path: join(dir, "song.dat"), mimeType: "audio/mpeg", data: "//uQRAAAAAA=" },
+			{ path: join(dir, "voice.mp3"), mimeType: "audio/wav", data: "UklGRiQAAABXQVZFZm10IA==" },
+			{ path: join(dir, "clip.bin"), mimeType: "video/mp4", data: "AAAAGGZ0eXBtcDQyAAAAAG1wNDJpc29t" },
+		],
+	});
 });
 
-test("keeps trailing punctuation outside the mention", async () => {
-	const dir = await fixtureDir({ "invoice.pdf": "%PDF-1.4", "a.png": "png" });
-	const marker = makeMarker(join(dir, "invoice.pdf"), "application/pdf");
-	assert.equal(await attachLocalMedia("what is in @invoice.pdf?", dir), `what is in ${marker}?`);
-	assert.equal(
-		await attachLocalMedia("see (@a.png), then @invoice.pdf.", dir),
-		`see (${makeMarker(join(dir, "a.png"), "image/png")}), then ${marker}.`,
-	);
+test("attaches quoted paths with spaces and keeps trailing punctuation outside the mention", async () => {
+	const dir = await fixtureDir({ "my report.pdf": "%PDF-1.4", "a.mp3": MP3_BYTES });
+	assert.deepEqual(await findMedia('see (@a.mp3), then @"my report.pdf".', dir), {
+		images: [],
+		attachments: [
+			{ path: join(dir, "a.mp3"), mimeType: "audio/mpeg", data: "//uQRAAAAAA=" },
+			{ path: join(dir, "my report.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" },
+		],
+	});
 });
 
-test("leaves files Gemini cannot take, unknown extensions, missing and empty files untouched", async () => {
-	const dir = await fixtureDir({ "notes.md": "# hi", "script.sh": "echo", "empty.pdf": "", "report.docx": "x" });
-	assert.equal(await attachLocalMedia("read @notes.md and @script.sh", dir), undefined);
-	assert.equal(await attachLocalMedia("open @report.docx", dir), undefined);
-	assert.equal(await attachLocalMedia("see @absent.pdf", dir), undefined);
-	assert.equal(await attachLocalMedia("@empty.pdf", dir), undefined);
-	assert.equal(await attachLocalMedia("no mentions here", dir), undefined);
+test("returns an @-mentioned image as image content", async () => {
+	const dir = await fixtureDir({ "shot.png": PNG_BYTES });
+	assert.deepEqual(await findMedia("what is in @shot.png?", dir), { images: [PNG_IMAGE], attachments: [] });
+});
+
+// A 1x1 24-bit BMP: file header, BITMAPINFOHEADER and one padded pixel row.
+const BMP_BYTES = Buffer.alloc(58);
+BMP_BYTES.write("BM");
+BMP_BYTES.writeUInt32LE(58, 2);
+BMP_BYTES.writeUInt32LE(54, 10);
+BMP_BYTES.writeUInt32LE(40, 14);
+BMP_BYTES.writeInt32LE(1, 18);
+BMP_BYTES.writeInt32LE(1, 22);
+BMP_BYTES.writeUInt16LE(1, 26);
+BMP_BYTES.writeUInt16LE(24, 28);
+BMP_BYTES.writeUInt32LE(4, 34);
+
+// The ftyp box at the start of a HEIC file.
+const HEIC_BYTES = Buffer.concat([
+	Buffer.from([0, 0, 0, 0x18]),
+	Buffer.from("ftypheic"),
+	Buffer.alloc(4),
+	Buffer.from("mif1heic"),
+]);
+
+test("detects the image type with pi's detector", async () => {
+	const dir = await fixtureDir({ "fake.png": "not an image", "photo.heic": HEIC_BYTES, "pic.dat": BMP_BYTES });
+	assert.deepEqual(await findMedia("see @fake.png, @photo.heic and @pic.dat", dir), {
+		images: [
+			{
+				type: "image",
+				data: "Qk06AAAAAAAAADYAAAAoAAAAAQAAAAEAAAABABgAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+				mimeType: "image/bmp",
+			},
+		],
+		attachments: [],
+	});
+});
+
+test("returns an image and a PDF from one message", async () => {
+	const dir = await fixtureDir({ "my shot.png": PNG_BYTES, "report.pdf": "%PDF-1.4" });
+	assert.deepEqual(await findMedia('compare @"my shot.png" with @report.pdf', dir), {
+		images: [PNG_IMAGE],
+		attachments: [{ path: join(dir, "report.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
+	});
+});
+
+test("leaves text, other binary types, missing and empty files out", async () => {
+	const dir = await fixtureDir({ "notes.md": "# hi", "song.mp3": "not audio", "archive.pdf": "PK\u0003\u0004", "empty.pdf": "" });
+	assert.deepEqual(await findMedia("read @notes.md @song.mp3 @archive.pdf @absent.pdf @empty.pdf", dir), NOTHING);
+	assert.deepEqual(await findMedia("no mentions here", dir), NOTHING);
+});
+
+test("leaves a file larger than the size cap out and attaches a file at the cap", async () => {
+	const dir = await fixtureDir({ "big.pdf": "%PDF-1.4 ", "max.pdf": "%PDF-1.4" });
+	assert.deepEqual(await findLocalMedia("@big.pdf @max.pdf", dir, 8), {
+		images: [],
+		attachments: [{ path: join(dir, "max.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
+	});
 });
 
 test("ignores an email-like mention that is not a path", async () => {
 	const dir = await fixtureDir({});
-	assert.equal(await attachLocalMedia("mail me at someone@example.com", dir), undefined);
+	assert.deepEqual(await findMedia("mail me at someone@example.com", dir), NOTHING);
 });
 
-test("splits text around markers", () => {
-	const marker = makeMarker("/tmp/a.png", "image/png");
-	assert.deepEqual(splitMarkers(`look\n\n${marker}\nthanks`), [
-		{ type: "text", text: "look" },
-		{ type: "media", path: "/tmp/a.png", mediaType: "image/png" },
-		{ type: "text", text: "thanks" },
-	]);
-	assert.deepEqual(splitMarkers("no media here"), [{ type: "text", text: "no media here" }]);
+test("attaches a file that the message names more than one time once", async () => {
+	const dir = await fixtureDir({ "a.pdf": "%PDF-1.4", "shot.png": PNG_BYTES });
+	assert.deepEqual(await findMedia("@a.pdf and @a.pdf, @shot.png and @./shot.png", dir), {
+		images: [PNG_IMAGE],
+		attachments: [{ path: join(dir, "a.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
+	});
 });

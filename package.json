@@ -1,7 +1,7 @@
 {
   "name": "@8monkey/pi-media",
   "version": "0.1.0",
-  "description": "Pi extension that attaches local images, audio, video and PDFs mentioned with @ to the model request.",
+  "description": "Pi extension that attaches local images, audio, video and PDF files when you write their paths in your message, and lets the read tool read audio, video and PDF files.",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -23,16 +23,31 @@
   "publishConfig": {
     "access": "public"
   },
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
-    "test": "node --test",
-    "typecheck": "tsc --noEmit"
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "format": "biome format --write .",
+    "lint": "biome lint .",
+    "check": "biome check . && npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "file-type": "^22.1.1"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1127.0",
+    "@biomejs/biome": "^2.5.15",
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
+    "@google/genai": "^2.21.0",
     "@types/node": "^22",
+    "openai": "^7.19.0",
     "typescript": "^5"
   },
   "keywords": [
