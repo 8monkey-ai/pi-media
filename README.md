@@ -177,7 +177,7 @@ Example, for a limit of 50 MiB:
 - A path without quotes or backslashes ends at the first space if its line has other text. In `see /Users/me/My File.png`, pi-media looks for `/Users/me/My`, and no file attaches.
 - On Windows, a path without quotes that has `\'` for an apostrophe does not attach, for example `don\'t.png`. The mintty terminal of Git Bash can write a path in this form.
 - Audio, video and PDF files do not attach to a message that pi expands from a skill (`/skill:name`) or a prompt template (`/name`). Images attach.
-- pi-media stores the files of a message in a session entry of its own, and finds that entry by the message text. Each message gets the files of one entry at most. If a message does not reach the session, for example when you clear the message queue or edit a message in the session tree, its entry stays unused. A later message with the same text that attaches no files of its own then gets the files of that entry.
+- pi-media stores the files of a message in a session entry of its own, and finds that entry by the message text. Each message gets the files of one entry at most. If a message does not reach the session, for example when you clear the message queue or edit a message in the session tree, its entry stays unused. A later message with the same text that attaches no files of its own then gets the files of that entry. If you queue two messages with the same text and the file changes between them, each message can get the file as it was for the other message.
 - pi-media marks the place of a file in a request with text of the form `[[pi-media:<id>:<number>]]`. If your message or a tool result ends with lines that hold only text of this form, pi-media can remove these lines from the request.
 
 ## Requirements
