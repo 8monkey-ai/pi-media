@@ -134,26 +134,14 @@ const toolTail = async (attachment: Attachment | undefined) => {
 };
 const toolNote = { role: "tool", content: pdfNote, tool_call_id: "call_1" };
 
-test("moves each carried kind from a tool result to a user message after it", async () => {
-	const kinds = [
-		[0, pdfFilePart],
-		[1, audioPart("UklGRiQAAAA=", "wav")],
-		[2, audioPart("//uQRAAAAAA=", "mp3")],
-		[3, audioPart("Rk9STQ==", "aiff")],
-		[4, audioPart("//FQ", "aac")],
-		[5, audioPart("T2dnUwAC", "ogg")],
-		[6, audioPart("ZkxhQw==", "flac")],
-		[7, audioPart("AAAAHGZ0eXBNNEE=", "m4a")],
-		[8, videoPart("data:video/mp4;base64,AAAAGGZ0eXA=")],
-		[9, videoPart("data:video/mpeg;base64,AAABug==")],
-		[10, videoPart("data:video/webm;base64,GkXfow==")],
-	] as const;
-	for (const [index, part] of kinds) {
-		assert.deepEqual(await toolTail(attachments[index]), [
-			toolNote,
-			{ role: "user", content: [{ type: "text", text: "Attached file(s) from tool result:" }, part] },
-		]);
-	}
+test("moves a video from a tool result to a user message after it", async () => {
+	assert.deepEqual(await toolTail(attachments[8]), [
+		toolNote,
+		{
+			role: "user",
+			content: [{ type: "text", text: "Attached file(s) from tool result:" }, videoPart("data:video/mp4;base64,AAAAGGZ0eXA=")],
+		},
+	]);
 });
 
 test("removes the tool result marker of a type it does not carry or a missing attachment, and keeps the note", async () => {

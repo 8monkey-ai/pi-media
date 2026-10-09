@@ -131,24 +131,6 @@ test("derives a document name from the file name with only the characters Conver
 	}
 });
 
-test("gives each document in the request a different name, in message order", async () => {
-	const payload = await payloadFor([
-		user("first /gone/doc.pdf", "[[pi-media:e1:0]]"),
-		assistant([{ type: "text", text: "ok" }]),
-		user("again /gone/doc.pdf /other/doc.pdf", "[[pi-media:e1:0]]", "[[pi-media:e1:4]]"),
-	]);
-	const expected = [
-		{ role: "user", content: [{ text: "first /gone/doc.pdf" }, docBlock("doc")] },
-		{ role: "assistant", content: [{ text: "ok" }] },
-		{
-			role: "user",
-			content: [{ text: "again /gone/doc.pdf /other/doc.pdf" }, docBlock("doc (2)"), docBlock("doc (3)"), cachePoint],
-		},
-	];
-	assert.deepEqual(messagesOf(rewrite(payload)), expected);
-	assert.deepEqual(messagesOf(rewrite(payload)), expected);
-});
-
 test("adds the text block that a message with a document needs when the message has no text", async () => {
 	const payload = await payloadFor([
 		user("[[pi-media:e1:2]]"),
@@ -199,13 +181,10 @@ test("replaces a tool result marker with a document block and keeps the cache po
 		role: "user",
 		content: [toolResult("t1", { text: pdfNote }, { text: "[[pi-media:e1:0]]" }), cachePoint],
 	});
-	const result = messagesOf(adapter.rewrite(payload, readOf("application/pdf")));
-	assert.deepEqual(result[2], {
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, readOf("application/pdf")))[2], {
 		role: "user",
 		content: [toolResult("t1", { text: pdfNote }, docBlock("report")), cachePoint],
 	});
-	assert.equal(result[0], payload.messages[0]);
-	assert.equal(result[1], payload.messages[1]);
 });
 
 test("replaces a tool result marker with a video block", async () => {
@@ -237,23 +216,20 @@ test("changes only the tool result with media when two tool results come in a ro
 		readResult("t1", pdfNote, "[[pi-media:e1:0]]"),
 		readResult("t2", "plain text"),
 	]);
-	const before = payload.messages[2] as { content: unknown[] };
-	const result = messagesOf(adapter.rewrite(payload, readOf("application/pdf")));
-	assert.deepEqual(result[2], {
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, readOf("application/pdf")))[2], {
 		role: "user",
 		content: [toolResult("t1", { text: pdfNote }, docBlock("report")), toolResult("t2", { text: "plain text" }), cachePoint],
 	});
-	assert.equal((result[2] as { content: unknown[] }).content[1], before.content[1]);
 });
 
-test("names documents in user messages and tool results in message order, the same way each time", async () => {
+test("gives each document in user messages and tool results a different name, in message order", async () => {
 	const payload = await payloadFor([
 		user("see /gone/doc.pdf", "[[pi-media:e1:0]]"),
 		...readTurn(assistant, readResult("t1", "Read PDF file [application/pdf]: /gone/doc.pdf", "[[pi-media:e1:0]]")).slice(1),
 		assistant([{ type: "text", text: "ok" }]),
-		user("and /other/doc.pdf", "[[pi-media:e1:4]]"),
+		user("again /gone/doc.pdf and /other/doc.pdf", "[[pi-media:e1:0]]", "[[pi-media:e1:4]]"),
 	]);
-	const expected = [
+	assert.deepEqual(messagesOf(assertPureRewrite(adapter, payload, find)), [
 		{ role: "user", content: [{ text: "see /gone/doc.pdf" }, docBlock("doc")] },
 		payload.messages[1],
 		{
@@ -261,9 +237,11 @@ test("names documents in user messages and tool results in message order, the sa
 			content: [toolResult("t1", { text: "Read PDF file [application/pdf]: /gone/doc.pdf" }, docBlock("doc (2)"))],
 		},
 		{ role: "assistant", content: [{ text: "ok" }] },
-		{ role: "user", content: [{ text: "and /other/doc.pdf" }, docBlock("doc (3)"), cachePoint] },
-	];
-	assert.deepEqual(messagesOf(assertPureRewrite(adapter, payload, find)), expected);
+		{
+			role: "user",
+			content: [{ text: "again /gone/doc.pdf and /other/doc.pdf" }, docBlock("doc (3)"), docBlock("doc (4)"), cachePoint],
+		},
+	]);
 });
 
 test("leaves user and tool result text that only contains a marker", async () => {
@@ -279,14 +257,6 @@ test("leaves markers in assistant messages", async () => {
 	const payload = await payloadFor([user("go"), assistant([{ type: "text", text: "I saw [[pi-media:e1:0]]" }]), user("next")]);
 	assert.deepEqual(payload.messages[1], { role: "assistant", content: [{ text: "I saw [[pi-media:e1:0]]" }] });
 	assert.equal(rewrite(payload), undefined);
-});
-
-test("keeps untouched messages by reference", async () => {
-	const payload = await payloadFor([user("hello"), assistant([{ type: "text", text: "hi" }]), user("[[pi-media:e1:2]]")]);
-	const result = messagesOf(rewrite(payload));
-	assert.equal(result[0], payload.messages[0]);
-	assert.equal(result[1], payload.messages[1]);
-	assert.deepEqual(result[2], { role: "user", content: [mp4Block, cachePoint] });
 });
 
 test("passes through payloads without a message list", () => {

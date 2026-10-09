@@ -6,13 +6,14 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { registerAdapter } from "../src/adapters/registry.ts";
 import extension from "../src/index.ts";
 import { takeMarkers } from "../src/marker.ts";
+import { MP4_BYTES } from "./fixtures.ts";
 import { startSession } from "./session-harness.ts";
 
-// The model reads report.pdf with the read tool, then answers.
-function readThenAnswer(messages: Message[]) {
+// The model reads the file with the read tool, then answers.
+const readThenAnswer = (path: string) => (messages: Message[]) => {
 	if (messages.at(-1)?.role !== "user") return fauxAssistantMessage("ok");
-	return fauxAssistantMessage(fauxToolCall("read", { path: "report.pdf" }, { id: "call-1" }), { stopReason: "toolUse" });
-}
+	return fauxAssistantMessage(fauxToolCall("read", { path }, { id: "call-1" }), { stopReason: "toolUse" });
+};
 
 // The payload holds the tool results of the request, so an adapter can find markers in them.
 function toolResultPayload(messages: Message[]) {
@@ -31,17 +32,19 @@ registerAdapter({
 	}),
 });
 
-async function readPdf(api: string) {
+async function readFile(api: string, name: string, bytes: string | Buffer) {
 	const started = await startSession([extension], {
-		files: { "report.pdf": "%PDF-1.4" },
+		files: { [name]: bytes },
 		api,
 		tools: ["read"],
-		reply: readThenAnswer,
+		reply: readThenAnswer(name),
 		payload: toolResultPayload,
 	});
-	await started.settle(started.session.prompt("summarize report.pdf"));
+	await started.settle(started.session.prompt(`summarize ${name}`));
 	return started;
 }
+
+const readPdf = (api: string) => readFile(api, "report.pdf", "%PDF-1.4");
 
 function toolResultEntries(branch: SessionEntry[]) {
 	return branch.flatMap((entry) =>
@@ -86,12 +89,16 @@ test("marks the tool result for an adapter that carries it, and the payload rewr
 	]);
 });
 
-for (const api of ["mistral-conversations", "test-unknown-api"]) {
-	test(`tells a model with the ${api} API that the file is not in the request`, async () => {
-		const { dir, requests } = await readPdf(api);
+// Mistral has no adapter. Chat Completions has one, but it does not carry video.
+for (const [api, name, bytes, kind] of [
+	["mistral-conversations", "report.pdf", "%PDF-1.4", "PDF file [application/pdf]"],
+	["openai-completions", "clip.mp4", MP4_BYTES, "video file [video/mp4]"],
+] as const) {
+	test(`tells a model with the ${api} API that ${name} is not in the request`, async () => {
+		const { dir, requests } = await readFile(api, name, bytes);
 		assert.deepEqual(toolResultContents(requests[1].messages), [
 			[
-				{ type: "text", text: `Read PDF file [application/pdf]: ${join(dir, "report.pdf")}` },
+				{ type: "text", text: `Read ${kind}: ${join(dir, name)}` },
 				{
 					type: "text",
 					text: "[The API of the current model cannot take this file type. The file content is not in this request.]",

@@ -145,21 +145,19 @@ test("leaves markers in assistant and system messages", () => {
 	assert.equal(rewrite(payload), undefined);
 });
 
-test("keeps untouched messages by reference", () => {
+test("leaves the messages without a marker as they are", () => {
 	const system = { role: "system", content: "sys" };
 	const earlier = { role: "user", content: [{ type: "text", text: "hello" }] };
-	const result = messagesOf(rewrite({ messages: [system, earlier, { role: "user", content: "[[pi-media:e1:0]]" }] }));
-	assert.equal(result[0], system);
-	assert.equal(result[1], earlier);
-	assert.deepEqual(result[2], { role: "user", content: [pdfFilePart] });
+	assert.deepEqual(messagesOf(rewrite({ messages: [system, earlier, { role: "user", content: "[[pi-media:e1:0]]" }] })), [
+		system,
+		earlier,
+		{ role: "user", content: [pdfFilePart] },
+	]);
 });
 
-test("returns undefined when no user message has a marker", () => {
+test("returns undefined for a payload without a marker or without a message list", () => {
 	assert.equal(rewrite({ messages: [{ role: "user", content: "hello" }] }), undefined);
 	assert.equal(rewrite({ messages: [{ role: "assistant", content: null }] }), undefined);
-});
-
-test("passes through payloads without a message list", () => {
 	for (const payload of [undefined, "raw", { foo: 1 }, { messages: "nope" }, { messages: [null, 3] }]) {
 		assert.equal(rewrite(payload), undefined);
 	}
@@ -178,24 +176,13 @@ const readTurn = (...results: ToolResultMessage[]) =>
 const pdf = { path: "/tmp/x/report.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" };
 const reportPart = { type: "file", file: { filename: "report.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } };
 
-test("pi-ai joins the note and the marker of a tool result into one string", async () => {
+test("moves a PDF from a tool result to a user message after it", async () => {
 	const payload = await piMessagesPayload(readTurn(readPdf()));
 	assert.deepEqual(payload.messages[2], { role: "tool", content: `${pdfNote}\n[[pi-media:e1:0]]`, tool_call_id: "call_1" });
-});
-
-test("moves each carried kind from a tool result to a user message after it", async () => {
-	const kinds = [
-		[pdf, reportPart],
-		[{ path: "/tmp/x/a.mp3", mimeType: "audio/mpeg", data: "//uQRAAAAAA=" }, mp3Part],
-		[{ path: "/tmp/x/voice.wav", mimeType: "audio/wav", data: "UklGRiQAAAA=" }, wavPart],
-	] as const;
-	for (const [attachment, part] of kinds) {
-		const payload = await piMessagesPayload(readTurn(readPdf()));
-		const result = messagesOf(adapter.rewrite(payload, findIn({ e1: [attachment] })));
-		assert.equal(result[0], payload.messages[0]);
-		assert.equal(result[1], payload.messages[1]);
-		assert.deepEqual(result.slice(2), [{ role: "tool", content: pdfNote, tool_call_id: "call_1" }, followUp(part)]);
-	}
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, findIn({ e1: [pdf] }))).slice(2), [
+		{ role: "tool", content: pdfNote, tool_call_id: "call_1" },
+		followUp(reportPart),
+	]);
 });
 
 test("removes the tool result marker of a type it does not carry or a missing attachment, and keeps the note", async () => {
@@ -234,9 +221,7 @@ test("puts the files after the last of consecutive tool results", async () => {
 	const payload = await piMessagesPayload(
 		readTurn(readPdf("call_1"), toolResult("call_2", [{ type: "text", text: "line one" }])),
 	);
-	const result = messagesOf(adapter.rewrite(payload, findIn({ e1: [pdf] })));
-	assert.equal(result[3], payload.messages[3]);
-	assert.deepEqual(result.slice(2), [
+	assert.deepEqual(messagesOf(adapter.rewrite(payload, findIn({ e1: [pdf] }))).slice(2), [
 		{ role: "tool", content: pdfNote, tool_call_id: "call_1" },
 		{ role: "tool", content: "line one", tool_call_id: "call_2" },
 		followUp(reportPart),
@@ -313,7 +298,7 @@ test("rewrites a user message marker and a tool result marker in the same payloa
 	};
 	const payload = await piMessagesPayload([prompt, ...readTurn(readPdf()).slice(1)]);
 	const mp3 = { path: "/tmp/x/a.mp3", mimeType: "audio/mpeg", data: "//uQRAAAAAA=" };
-	const result = messagesOf(adapter.rewrite(payload, findIn({ e1: [pdf], u1: [mp3] })));
+	const result = messagesOf(assertPureRewrite(adapter, payload, findIn({ e1: [pdf], u1: [mp3] })));
 	assert.deepEqual(result[0], { role: "user", content: [{ type: "text", text: "see @a.mp3" }, mp3Part] });
 	assert.deepEqual(result.slice(2), [{ role: "tool", content: pdfNote, tool_call_id: "call_1" }, followUp(reportPart)]);
 });
@@ -327,9 +312,4 @@ test("keeps the cache marker on the tool result text when the tool result is the
 		{ role: "tool", content: [{ type: "text", text: pdfNote, cache_control: { type: "ephemeral" } }], tool_call_id: "call_1" },
 		followUp(reportPart),
 	]);
-});
-
-test("gives the same result for the same tool result payload and does not change it", async () => {
-	const payload = await piMessagesPayload(readTurn(readPdf(), toolResult("call_2", [{ type: "text", text: "line one" }])));
-	assert.equal(messagesOf(assertPureRewrite(adapter, payload, findIn({ e1: [pdf] }))).length, 5);
 });

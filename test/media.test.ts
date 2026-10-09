@@ -46,9 +46,38 @@ test("returns an @-mentioned image as image content", async () => {
 	assert.deepEqual(await findMedia("what is in @shot.png?", dir), { images: [PNG_IMAGE], attachments: [] });
 });
 
+// A 1x1 24-bit BMP: file header, BITMAPINFOHEADER and one padded pixel row.
+const BMP_BYTES = Buffer.alloc(58);
+BMP_BYTES.write("BM");
+BMP_BYTES.writeUInt32LE(58, 2);
+BMP_BYTES.writeUInt32LE(54, 10);
+BMP_BYTES.writeUInt32LE(40, 14);
+BMP_BYTES.writeInt32LE(1, 18);
+BMP_BYTES.writeInt32LE(1, 22);
+BMP_BYTES.writeUInt16LE(1, 26);
+BMP_BYTES.writeUInt16LE(24, 28);
+BMP_BYTES.writeUInt32LE(4, 34);
+
+// The ftyp box at the start of a HEIC file.
+const HEIC_BYTES = Buffer.concat([
+	Buffer.from([0, 0, 0, 0x18]),
+	Buffer.from("ftypheic"),
+	Buffer.alloc(4),
+	Buffer.from("mif1heic"),
+]);
+
 test("detects the image type with pi's detector", async () => {
-	const dir = await fixtureDir({ "fake.png": "not an image", "photo.heic": "heic bytes" });
-	assert.deepEqual(await findMedia("see @fake.png and @photo.heic", dir), NOTHING);
+	const dir = await fixtureDir({ "fake.png": "not an image", "photo.heic": HEIC_BYTES, "pic.dat": BMP_BYTES });
+	assert.deepEqual(await findMedia("see @fake.png, @photo.heic and @pic.dat", dir), {
+		images: [
+			{
+				type: "image",
+				data: "Qk06AAAAAAAAADYAAAAoAAAAAQAAAAEAAAABABgAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+				mimeType: "image/bmp",
+			},
+		],
+		attachments: [],
+	});
 });
 
 test("returns an image and a PDF from one message", async () => {

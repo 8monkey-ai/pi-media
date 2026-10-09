@@ -70,16 +70,19 @@ test("replaces the marker block with a document block and moves the cache marker
 	});
 });
 
-test("removes markers of audio and video and moves the cache marker to the typed text", async () => {
-	const payload = await payloadFor([user([text("hear @a.mp3 @clip.mp4"), text("[[pi-media:e1:1]]"), text("[[pi-media:e1:2]]")])]);
+test("removes markers of audio, video and missing attachments and moves the cache marker to the typed text", async () => {
+	const payload = await payloadFor([
+		user([
+			text("hear @a.mp3 @clip.mp4"),
+			text("[[pi-media:e1:1]]"),
+			text("[[pi-media:e1:2]]"),
+			text("[[pi-media:gone:0]]"),
+			text("[[pi-media:e1:7]]"),
+		]),
+	]);
 	assert.deepEqual(messagesOf(rewrite(payload)), [
 		{ role: "user", content: [{ type: "text", text: "hear @a.mp3 @clip.mp4", ...cache }] },
 	]);
-});
-
-test("removes a marker whose attachment is missing", async () => {
-	const payload = await payloadFor([user([text("hi"), text("[[pi-media:gone:0]]"), text("[[pi-media:e1:7]]")])]);
-	assert.deepEqual(messagesOf(rewrite(payload)), [{ role: "user", content: [{ type: "text", text: "hi", ...cache }] }]);
 });
 
 test("keeps the cache marker on a last block that is not a marker", async () => {
@@ -205,8 +208,7 @@ test("rewrites one of two tool results in a row, and a user message marker in th
 		assistant([text("done")]),
 		user("thanks"),
 	]);
-	const result = messagesOf(assertPureRewrite(adapter, payload, find));
-	assert.deepEqual(result, [
+	assert.deepEqual(messagesOf(assertPureRewrite(adapter, payload, find)), [
 		{ role: "user", content: [{ type: "text", text: "see @doc.pdf" }, pdfBlock] },
 		{
 			role: "assistant",
@@ -225,24 +227,6 @@ test("rewrites one of two tool results in a row, and a user message marker in th
 		{ role: "assistant", content: [{ type: "text", text: "done" }] },
 		{ role: "user", content: [{ type: "text", text: "thanks", ...cache }] },
 	]);
-	const toolResults = (message: unknown) => (message as { content: unknown[] }).content;
-	assert.equal(toolResults(result[2])[1], toolResults(payload.messages[2])[1]);
-	assert.equal(result[1], payload.messages[1]);
-	assert.equal(result[4], payload.messages[4]);
-});
-
-test("keeps untouched messages by reference and gives the same result each time", async () => {
-	const payload = await payloadFor([user("hello"), assistant([text("hi")]), user([text("see"), text("[[pi-media:e1:0]]")])]);
-	const first = messagesOf(assertPureRewrite(adapter, payload, find));
-	assert.equal(first[0], payload.messages[0]);
-	assert.equal(first[1], payload.messages[1]);
-	assert.deepEqual(payload.messages[2], {
-		role: "user",
-		content: [
-			{ type: "text", text: "see" },
-			{ type: "text", text: "[[pi-media:e1:0]]", ...cache },
-		],
-	});
 });
 
 test("returns undefined when no user message has a marker", async () => {

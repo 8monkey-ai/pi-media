@@ -3,17 +3,24 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import extension from "../src/index.ts";
-import { MP3_BYTES, MP3_PART } from "./fixtures.ts";
+import { isMediaEntry } from "../src/media-entry.ts";
+import { MP3_BYTES, MP3_PART, WAV_BYTES } from "./fixtures.ts";
 import { startSession } from "./session-harness.ts";
 
 // Which user messages a pi-media entry links to, across normal, queued, cleared and branched prompts.
 
-function user(text: string, files = 0) {
-	return { role: "user", content: [{ type: "text", text }, ...Array.from({ length: files }, () => MP3_PART)] };
+function userWith(text: string, ...parts: unknown[]) {
+	return { role: "user", content: [{ type: "text", text }, ...parts] };
 }
 
+function user(text: string, files = 0) {
+	return userWith(text, ...Array.from({ length: files }, () => MP3_PART));
+}
+
+const WAV_PART = { type: "input_audio", input_audio: { data: "UklGRiQAAABXQVZFZm10IA==", format: "wav" } };
+
 async function start() {
-	return startSession([extension], { files: { "a.mp3": MP3_BYTES } });
+	return startSession([extension], { files: { "a.mp3": MP3_BYTES, "b.wav": WAV_BYTES } });
 }
 
 test("links a steer message sent while pi streams", async () => {
@@ -34,15 +41,16 @@ test("links a follow-up message sent while pi streams", async () => {
 	assert.deepEqual(requests.at(-1)?.payload, { messages: [user("first"), user("later @a.mp3", 1)] });
 });
 
-test("links each of two queued messages that share a timestamp to its own entry", async () => {
+test("links each of two queued messages that share a timestamp to its own entry", async (t) => {
+	t.mock.method(Date, "now", () => 1000);
 	const { session, requests, waitForCall, settle } = await start();
-	const run = session.prompt("@a.mp3 first");
+	const run = session.prompt("first");
 	await waitForCall();
 	await session.followUp("one @a.mp3");
-	await session.steer("two @a.mp3");
+	await session.steer("two @b.wav");
 	await settle(run);
 	assert.deepEqual(requests.at(-1)?.payload, {
-		messages: [user("@a.mp3 first", 1), user("two @a.mp3", 1), user("one @a.mp3", 1)],
+		messages: [user("first"), userWith("two @b.wav", WAV_PART), userWith("one @a.mp3", MP3_PART)],
 	});
 });
 
@@ -119,6 +127,10 @@ test("documents a known limit: does not link a message that a skill or prompt te
 	const { session, requests, settle } = await start();
 	await settle(session.prompt("/skill:greet @a.mp3"));
 	await settle(session.prompt("/review @a.mp3"));
+	assert.deepEqual(
+		session.sessionManager.getBranch().flatMap((entry) => (isMediaEntry(entry) ? [entry.data.text] : [])),
+		["/skill:greet @a.mp3", "/review @a.mp3"],
+	);
 	const payload = requests.at(-1)?.payload as { messages: { content: { type: string }[] }[] };
 	assert.deepEqual(
 		payload.messages.map((message) => message.content.map((part) => part.type)),
