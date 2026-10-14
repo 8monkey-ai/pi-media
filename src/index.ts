@@ -6,7 +6,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("before_provider_request", (event) => rewritePayload(event.payload));
 
 	pi.on("input", async (event, ctx) => {
-		const text = await attachLocalMedia(event.text, ctx.cwd);
-		return text === undefined ? { action: "continue" } : { action: "transform", text };
+		const attached = await attachLocalMedia(event.text, ctx.cwd);
+		if (!attached) return { action: "continue" };
+		return { action: "transform", text: attached.text, images: [...(event.images ?? []), ...attached.images] };
 	});
 }
