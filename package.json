@@ -24,13 +24,17 @@
     "access": "public"
   },
   "scripts": {
-    "test": "node --test",
-    "typecheck": "tsc --noEmit"
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "format": "biome format --write .",
+    "lint": "biome lint .",
+    "check": "biome check . && npm run typecheck && npm test"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
     "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^22",
     "typescript": "^5"

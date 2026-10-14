@@ -40,14 +40,19 @@ Planned, in rough order: Gemini API and Vertex, Anthropic and Bedrock (images an
 - Files over 20 MB are left as plain `@path` text. Host large media and reference it another way.
 - Errors from the provider, for instance an unsupported media kind or an oversized request, appear in the UI unchanged.
 
-No runtime dependencies, no build step. Runs under Node and Bun.
+No runtime dependencies. Runs under Node and Bun.
 
 ## Development
 
+pi-media has no build step. Pi loads the TypeScript files in `src/` directly.
+
+To run the Biome format and lint checks, the type check and the tests, run:
+
 ```bash
-node --test
-npm run typecheck
+npm run check
 ```
+
+To fix the format of the files, run `npm run format`.
 
 ## License
 
