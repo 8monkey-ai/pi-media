@@ -2,13 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 import { findLocalMedia } from "../src/media.ts";
-import { fixtureDir, MP3_BYTES, MP4_BYTES, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
-
-const NOTHING = { images: [], attachments: [] };
-
-function findMedia(text: string, cwd: string) {
-	return findLocalMedia(text, cwd, 20971520);
-}
+import { findMedia, fixtureDir, MP3_BYTES, MP4_BYTES, NOTHING, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
 
 test("attaches an @-mentioned PDF with its bytes", async () => {
 	const dir = await fixtureDir({ "report.pdf": "%PDF-1.4" });

@@ -45,5 +45,4 @@ function partFor(mimeType: string): Build | undefined {
 
 export const carries = (mimeType: string) => partFor(mimeType) !== undefined;
 
-// Returns undefined for a type that `carries` refuses.
 export const filePart = (attachment: Attachment) => partFor(attachment.mimeType)?.(attachment);

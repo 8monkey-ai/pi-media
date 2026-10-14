@@ -2,11 +2,10 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { type TestContext, test } from "node:test";
 import { findPathCandidates } from "../src/find-paths.ts";
-import { findLocalMedia } from "../src/media.ts";
 import { resolvePath } from "../src/resolve-path.ts";
-import { fixtureDir, MP3_BYTES, PNG_BYTES, PNG_IMAGE } from "./fixtures.ts";
+import { findMedia, fixtureDir, MP3_BYTES, NOTHING, PNG_BYTES, PNG_IMAGE } from "./fixtures.ts";
 
 const dir = await fixtureDir({
 	"shot.png": PNG_BYTES,
@@ -24,38 +23,45 @@ const dir = await fixtureDir({
 });
 await mkdir(join(dir, "sub"));
 
-const NOTHING = { images: [], attachments: [] };
 const pdf = (name: string) => ({ path: join(dir, name), mimeType: "application/pdf", data: "JVBERi0xLjQ=" });
 const myFile = pdf("My File.pdf");
 const report = pdf("report.pdf");
 const clip = { path: join(dir, "clip.mp3"), mimeType: "audio/mpeg", data: "//uQRAAAAAA=" };
 
-function findMedia(text: string, cwd: string) {
-	return findLocalMedia(text, cwd, 20971520);
-}
-
 function only(...attachments: unknown[]) {
 	return { images: [], attachments };
 }
 
-const TEMP_DIR_VARIABLES = ["TMPDIR", "TEMP", "TMP"];
+// Sets the environment variables and returns a function that restores them. The restore deletes a variable that was not
+// set, because process.env stores undefined as the string "undefined".
+function setEnv(values: Record<string, string>) {
+	const saved = Object.keys(values).map((name) => [name, process.env[name]] as const);
+	Object.assign(process.env, values);
+	return () => {
+		for (const [name, value] of saved) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	};
+}
+
+// Sets the home directory until the test ends. os.homedir() reads HOME on macOS and Linux, and USERPROFILE on Windows.
+function setHome(t: TestContext, home: string) {
+	t.after(setEnv({ HOME: home, USERPROFILE: home }));
+}
 
 // Runs `run` with `process.platform` set to `platform` and os.tmpdir() returning `tempDir`.
 // os.tmpdir() reads TMPDIR on macOS and Linux, and TEMP or TMP on Windows.
 function onPlatform<T>(platform: NodeJS.Platform, run: () => T, tempDir = tmpdir()) {
 	const original = Object.getOwnPropertyDescriptor(process, "platform");
 	assert.ok(original);
-	const env = TEMP_DIR_VARIABLES.map((name) => [name, process.env[name]] as const);
+	const restoreEnv = setEnv({ TMPDIR: tempDir, TEMP: tempDir, TMP: tempDir });
 	Object.defineProperty(process, "platform", { ...original, value: platform });
-	for (const name of TEMP_DIR_VARIABLES) process.env[name] = tempDir;
 	try {
 		return run();
 	} finally {
 		Object.defineProperty(process, "platform", original);
-		for (const [name, value] of env) {
-			if (value === undefined) delete process.env[name];
-			else process.env[name] = value;
-		}
+		restoreEnv();
 	}
 }
 
@@ -121,11 +127,7 @@ test("resolves ./ and ../ against the working directory", async () => {
 });
 
 test("resolves ~/ against the home directory", async (t) => {
-	const home = process.env.HOME;
-	t.after(() => {
-		process.env.HOME = home;
-	});
-	process.env.HOME = dir;
+	setHome(t, dir);
 	assert.deepEqual(await findMedia("see ~/report.pdf", "/"), only(report));
 });
 
@@ -251,14 +253,7 @@ test("keeps trailing punctuation outside a Windows path and skips URLs", () => {
 });
 
 test("resolves Windows paths by pi's Windows rules", (t) => {
-	// os.homedir() reads HOME on macOS and Linux, and USERPROFILE on Windows.
-	const { HOME, USERPROFILE } = process.env;
-	t.after(() => {
-		process.env.HOME = HOME;
-		process.env.USERPROFILE = USERPROFILE;
-	});
-	process.env.HOME = String.raw`C:\Users\me`;
-	process.env.USERPROFILE = String.raw`C:\Users\me`;
+	setHome(t, String.raw`C:\Users\me`);
 	const cwd = String.raw`C:\work`;
 	const cases = [
 		[String.raw`C:\Users\me\a.pdf`, String.raw`C:\Users\me\a.pdf`],
@@ -279,11 +274,7 @@ test("resolves Windows paths by pi's Windows rules", (t) => {
 });
 
 test("keeps Windows-only rules off on macOS and Linux", (t) => {
-	const home = process.env.HOME;
-	t.after(() => {
-		process.env.HOME = home;
-	});
-	process.env.HOME = "/home/me";
+	setHome(t, "/home/me");
 	assert.equal(resolveOn("linux", "/c/Users/me/a.pdf", "/work"), "/c/Users/me/a.pdf");
 	assert.equal(resolveOn("linux", "/mnt/d/a.pdf", "/work"), "/mnt/d/a.pdf");
 	assert.equal(resolveOn("darwin", String.raw`~\a.pdf`, "/work"), String.raw`/work/~\a.pdf`);

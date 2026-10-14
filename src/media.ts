@@ -3,12 +3,15 @@ import { detectSupportedImageMimeTypeFromFile, type InputEvent } from "@earendil
 import { fileTypeFromFile } from "file-type";
 import { findPathCandidates } from "./find-paths.ts";
 import type { Attachment } from "./media-entry.ts";
-import { isMediaType } from "./media-type.ts";
 import { resolveExistingPath } from "./resolve-path.ts";
 
 type ImageContent = NonNullable<InputEvent["images"]>[number];
 
-async function fileSize(path: string) {
+function isMediaType(mimeType: string) {
+	return mimeType.startsWith("audio/") || mimeType.startsWith("video/") || mimeType === "application/pdf";
+}
+
+async function regularFileSize(path: string) {
 	try {
 		const stats = await stat(path);
 		return stats.isFile() ? stats.size : 0;
@@ -29,7 +32,7 @@ async function detectType(path: string) {
 export async function findMediaFile(mention: string, cwd: string) {
 	const path = await resolveExistingPath(mention, cwd);
 	if (!path) return undefined;
-	const size = await fileSize(path);
+	const size = await regularFileSize(path);
 	if (size === 0) return undefined;
 	const type = await detectType(path).catch(() => undefined);
 	return type && { path, size, ...type };

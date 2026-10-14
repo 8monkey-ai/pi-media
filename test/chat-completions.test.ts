@@ -31,7 +31,6 @@ const findIn =
 
 const find = findIn({ e1: attachments, abc: [attachments[0]] });
 
-// The marker block of attachment `index` of entry `e1`.
 const marker = (index: number) => text(`[[pi-media:e1:${index}]]`);
 
 const messagesOf = (payload: unknown) => (payload as { messages: unknown[] }).messages;

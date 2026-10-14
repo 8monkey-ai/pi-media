@@ -34,14 +34,14 @@ const WINDOWS = syntax(
 	/(?<plain>[^ \t\r\n]+)/y,
 );
 
-type Syntax = typeof POSIX;
+type Rules = typeof POSIX;
 type WordPart = { literal?: string; double?: string; windowsSingle?: string; escaped?: string; plain?: string };
 
 function partValue({ literal, double, windowsSingle, escaped, plain }: WordPart) {
 	return literal ?? double?.replace(/\\(["\\$`])/g, "$1") ?? windowsSingle?.replace(/'\\''|''/g, "'") ?? escaped ?? plain ?? "";
 }
 
-function readWord(text: string, start: number, { quotedWordPart, bareWordPart }: Syntax) {
+function readWord(text: string, start: number, { quotedWordPart, bareWordPart }: Rules) {
 	const parts = text[start] === "'" || text[start] === '"' ? quotedWordPart : bareWordPart;
 	parts.lastIndex = start;
 	let value = "";
@@ -57,14 +57,14 @@ function readWord(text: string, start: number, { quotedWordPart, bareWordPart }:
 	return { value: value.slice(0, value.length - trailing), end: end - trailing };
 }
 
-function readCandidate(text: string, start: number, rules: Syntax) {
+function readCandidate(text: string, start: number, rules: Rules) {
 	const mention = text[start] === "@";
 	const word = readWord(text, mention ? start + 1 : start, rules);
 	if (!word.value || !(mention || rules.pathStart.test(word.value))) return [];
 	return [{ start, end: word.end, path: word.value }];
 }
 
-function findWholeLineCandidates(text: string, { wholeLinePath }: Syntax) {
+function findWholeLineCandidates(text: string, { wholeLinePath }: Rules) {
 	return [...text.matchAll(wholeLinePath)].map(({ 0: line, index }) => ({
 		start: index,
 		end: index + line.length,
@@ -86,10 +86,9 @@ function findPastedImageCandidates(text: string, tempDir: string, join: typeof p
 export function findPathCandidates(text: string) {
 	const windows = process.platform === "win32";
 	const rules = windows ? WINDOWS : POSIX;
-	const words = [...text.matchAll(WORD_START_RE)].flatMap((match) => readCandidate(text, match.index, rules));
 	return [
 		...findPastedImageCandidates(text, tmpdir(), windows ? win32.join : posix.join),
 		...findWholeLineCandidates(text, rules),
-		...words,
+		...[...text.matchAll(WORD_START_RE)].flatMap((match) => readCandidate(text, match.index, rules)),
 	].sort((a, b) => a.start - b.start);
 }

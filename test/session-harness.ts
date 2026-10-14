@@ -18,7 +18,7 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
-type Request = { messages: Message[]; payload: unknown };
+type ModelRequest = { messages: Message[]; payload: unknown };
 
 // The faux provider sends no payload of its own. This one has the Chat Completions shape of user messages,
 // so that `before_provider_request` handlers run on every model call.
@@ -50,11 +50,11 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 
 // Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
 // A model call waits until `settle` runs, so a test can queue input while pi streams.
-// `files` go into the working directory, which is also the agent directory. `sessionManager` defaults to an in-memory one.
-// `api` is the API of the model. It defaults to Chat Completions, the shape of the default payload.
-// `tools` names the active tools; there are none by default.
-// `reply` makes the answer of the model from the request messages, for example a tool call. It defaults to "ok".
-// `payload` makes the provider payload from the request messages. It defaults to the user messages in Chat Completions shape.
+// `files` go into the working directory, which is also the agent directory.
+// `api` is the API of the model. Its default, Chat Completions, is the shape of the default payload.
+// `tools` names the active tools.
+// `reply` makes the answer of the model from the request messages, for example a tool call.
+// `payload` makes the provider payload from the request messages.
 // `settings` are pi settings in addition to the ones that turn off compaction and retry.
 export async function startSession(
 	extensions: ExtensionFactory[],
@@ -76,7 +76,7 @@ export async function startSession(
 	await writeFile(join(dir, "prompts", "review.md"), "---\ndescription: Review.\n---\nReview $@ carefully.\n");
 
 	const gates: Array<() => void> = [];
-	const requests: Request[] = [];
+	const requests: ModelRequest[] = [];
 	const faux = fauxProvider({ api });
 	const respond: FauxResponseFactory = async (context, options, _state, model) => {
 		const payload = makePayload(context.messages);

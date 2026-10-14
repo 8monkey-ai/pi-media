@@ -30,7 +30,7 @@ function toolPayload(messages: Message[]) {
 	};
 }
 
-async function readFile(api: string, name: string, bytes: string | Buffer, options?: Parameters<typeof startSession>[1]) {
+async function startReadSession(api: string, name: string, bytes: string | Buffer, options?: Parameters<typeof startSession>[1]) {
 	const started = await startSession([extension], {
 		files: { [name]: bytes },
 		api,
@@ -43,7 +43,7 @@ async function readFile(api: string, name: string, bytes: string | Buffer, optio
 	return started;
 }
 
-const readPdf = (api: string) => readFile(api, "report.pdf", "%PDF-1.4");
+const readPdf = (api: string) => startReadSession(api, "report.pdf", "%PDF-1.4");
 
 function toolResultEntries(branch: SessionEntry[]) {
 	return branch.flatMap((entry) =>
@@ -94,7 +94,7 @@ for (const [api, name, bytes, kind] of [
 	["openai-completions", "clip.mov", MOV_BYTES, "video file [video/quicktime]"],
 ] as const) {
 	test(`tells a model with the ${api} API that ${name} is not in the request`, async () => {
-		const { dir, requests } = await readFile(api, name, bytes);
+		const { dir, requests } = await startReadSession(api, name, bytes);
 		assert.deepEqual(toolResultContents(requests[1].messages), [
 			[
 				{ type: "text", text: `Read ${kind}: ${join(dir, name)}` },
@@ -109,7 +109,9 @@ for (const [api, name, bytes, kind] of [
 
 test("reads an image unresized when the pi image auto-resize setting is off", async () => {
 	const png = widePng(2400);
-	const { session } = await readFile("openai-completions", "wide.png", png, { settings: { images: { autoResize: false } } });
+	const { session } = await startReadSession("openai-completions", "wide.png", png, {
+		settings: { images: { autoResize: false } },
+	});
 	assert.deepEqual(toolResultEntries(session.sessionManager.getBranch())[0].message.content[1], {
 		type: "image",
 		data: png.toString("base64"),

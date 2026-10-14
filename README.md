@@ -185,7 +185,7 @@ To run the Biome format and lint checks, the type check and the tests, run:
 npm run check
 ```
 
-To fix the format of the files, run `npm run format`.
+To run only the Biome lint check, run `npm run lint`. To fix the format of the files, run `npm run format`.
 
 ## License
 

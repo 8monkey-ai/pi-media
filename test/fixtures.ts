@@ -2,6 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
+import { findLocalMedia } from "../src/media.ts";
 
 // PNG signature and IHDR chunk of a 1x1 image.
 export const PNG_BYTES = Buffer.from([
@@ -61,4 +62,11 @@ export async function fixtureDir(files: Record<string, string | Buffer>) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-media-"));
 	for (const [name, content] of Object.entries(files)) await writeFile(join(dir, name), content);
 	return dir;
+}
+
+// The result of findLocalMedia when the text names no media file.
+export const NOTHING = { images: [], attachments: [] };
+
+export function findMedia(text: string, cwd: string) {
+	return findLocalMedia(text, cwd, 20971520);
 }

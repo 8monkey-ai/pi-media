@@ -31,7 +31,7 @@ export function toolResultAttachment(message: Messages[number]) {
 }
 
 // A marker names a pi-media entry and the index of its attachment, or a tool result entry and index 0.
-export function findAttachment(entry: SessionEntry | undefined, index: number): Attachment | undefined {
+export function findAttachment(entry: SessionEntry | undefined, index: number) {
 	if (entry?.type === "message") return index === 0 ? toolResultAttachment(entry.message) : undefined;
 	return isMediaEntry(entry) ? entry.data.attachments[index] : undefined;
 }

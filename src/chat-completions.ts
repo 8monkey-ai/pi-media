@@ -79,10 +79,10 @@ function rewriteToolMessage(message: unknown, attachment: FindAttachment) {
 		const text = textOf(node);
 		return text === undefined ? undefined : takeToolMarkers(text, attachment);
 	});
-	if (taken.every((nodes) => nodes === undefined)) return undefined;
+	if (taken.every((entry) => entry === undefined)) return undefined;
 	return {
 		message: { ...message, content: content.map((node, index) => (taken[index] ? { ...node, text: taken[index].text } : node)) },
-		parts: taken.flatMap((nodes) => nodes?.parts ?? []),
+		parts: taken.flatMap((entry) => entry?.parts ?? []),
 	};
 }
 

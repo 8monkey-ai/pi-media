@@ -4,19 +4,11 @@
     "includes": ["src/**", "test/**", "*.json"]
   },
   "formatter": {
-    "indentStyle": "tab",
     "lineWidth": 130
-  },
-  "javascript": {
-    "formatter": {
-      "quoteStyle": "double",
-      "semicolons": "always"
-    }
   },
   "json": {
     "formatter": {
-      "indentStyle": "space",
-      "indentWidth": 2
+      "indentStyle": "space"
     }
   },
   "linter": {
