@@ -83,12 +83,12 @@ function findPastedImageCandidates(text: string, tempDir: string, join: typeof p
 
 // Candidates can overlap; the caller keeps the first one that resolves.
 // At the same start, the stable sort puts a pasted image first, then a whole line, then a word.
-export function findPathCandidates(text: string, platform = process.platform, tempDir = tmpdir()) {
-	const windows = platform === "win32";
+export function findPathCandidates(text: string) {
+	const windows = process.platform === "win32";
 	const rules = windows ? WINDOWS : POSIX;
 	const words = [...text.matchAll(WORD_START_RE)].flatMap((match) => readCandidate(text, match.index, rules));
 	return [
-		...findPastedImageCandidates(text, tempDir, windows ? win32.join : posix.join),
+		...findPastedImageCandidates(text, tmpdir(), windows ? win32.join : posix.join),
 		...findWholeLineCandidates(text, rules),
 		...words,
 	].sort((a, b) => a.start - b.start);

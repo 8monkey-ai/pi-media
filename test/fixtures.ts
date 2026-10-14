@@ -1,6 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { crc32, deflateSync } from "node:zlib";
 
 // PNG signature and IHDR chunk of a 1x1 image.
 export const PNG_BYTES = Buffer.from([
@@ -26,6 +27,29 @@ export const MOV_BYTES = Buffer.concat([
 	Buffer.alloc(4),
 	Buffer.from("qt  "),
 ]);
+
+function pngChunk(type: string, data: Buffer) {
+	const typed = Buffer.concat([Buffer.from(type), data]);
+	const length = Buffer.alloc(4);
+	length.writeUInt32BE(data.length);
+	const crc = Buffer.alloc(4);
+	crc.writeUInt32BE(crc32(typed));
+	return Buffer.concat([length, typed, crc]);
+}
+
+// A grayscale PNG one row high, wider than the 2000 pixels pi resizes to by default.
+export function widePng(width: number) {
+	const header = Buffer.alloc(13);
+	header.writeUInt32BE(width, 0);
+	header.writeUInt32BE(1, 4);
+	header[8] = 8;
+	return Buffer.concat([
+		PNG_BYTES.subarray(0, 8),
+		pngChunk("IHDR", header),
+		pngChunk("IDAT", deflateSync(Buffer.alloc(width + 1))),
+		pngChunk("IEND", Buffer.alloc(0)),
+	]);
+}
 
 // The image content that pi gets for PNG_BYTES.
 export const PNG_IMAGE = { type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ", mimeType: "image/png" };

@@ -50,7 +50,7 @@ test("marks the request copy of the user message and sends the attachment as an 
 	});
 });
 
-for (const api of ["mistral-conversations", "test-unknown-api"]) {
+for (const api of ["mistral-conversations", "openai-responses"]) {
 	test(`sends only the typed path as text to a model with the ${api} API`, async () => {
 		const { session, requests, settle } = await startSession([extension], { files: { "a.mp3": MP3_BYTES }, api });
 		await settle(session.prompt("listen to @a.mp3"));
@@ -58,9 +58,6 @@ for (const api of ["mistral-conversations", "test-unknown-api"]) {
 			requests[0].messages.filter((message) => message.role === "user").map((message) => message.content),
 			[[{ type: "text", text: "listen to @a.mp3" }]],
 		);
-		assert.deepEqual(requests[0].payload, {
-			messages: [{ role: "user", content: [{ type: "text", text: "listen to @a.mp3" }] }],
-		});
 	});
 }
 

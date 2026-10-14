@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { findPathCandidates } from "../src/find-paths.ts";
@@ -14,8 +15,8 @@ const dir = await fixtureDir({
 	"it's.pdf": "%PDF-1.4",
 	"report.pdf": "%PDF-1.4",
 	"clip.mp3": MP3_BYTES,
-	"empty.pdf": "",
-	"notes.md": "# hi",
+	"clip.mp3 2.mp3": MP3_BYTES,
+	'say "hi".pdf': "%PDF-1.4",
 	"Screenshot 2024-01-01 at 10.00.00\u202FAM.pdf": "%PDF-1.4",
 	"Cafe\u0301.png": PNG_BYTES,
 	"Capture d\u2019e\u0301cran.png": PNG_BYTES,
@@ -37,6 +38,31 @@ function only(...attachments: unknown[]) {
 	return { images: [], attachments };
 }
 
+const TEMP_DIR_VARIABLES = ["TMPDIR", "TEMP", "TMP"];
+
+// Runs `run` with `process.platform` set to `platform` and os.tmpdir() returning `tempDir`.
+// os.tmpdir() reads TMPDIR on macOS and Linux, and TEMP or TMP on Windows.
+function onPlatform<T>(platform: NodeJS.Platform, run: () => T, tempDir = tmpdir()) {
+	const original = Object.getOwnPropertyDescriptor(process, "platform");
+	assert.ok(original);
+	const env = TEMP_DIR_VARIABLES.map((name) => [name, process.env[name]] as const);
+	Object.defineProperty(process, "platform", { ...original, value: platform });
+	for (const name of TEMP_DIR_VARIABLES) process.env[name] = tempDir;
+	try {
+		return run();
+	} finally {
+		Object.defineProperty(process, "platform", original);
+		for (const [name, value] of env) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	}
+}
+
+const candidates = (text: string, platform: NodeJS.Platform, tempDir?: string) =>
+	onPlatform(platform, () => findPathCandidates(text), tempDir);
+const resolveOn = (platform: NodeJS.Platform, path: string, cwd: string) => onPlatform(platform, () => resolvePath(path, cwd));
+
 test("attaches a bare absolute image path", async () => {
 	assert.deepEqual(await findMedia(`${dir}/shot.png what is this?`, "/"), {
 		images: [PNG_IMAGE],
@@ -53,8 +79,9 @@ test("attaches a single-quoted path, including a quote written as '\\''", async 
 	assert.deepEqual(await findMedia(`'${dir}/it'\\''s.pdf'`, "/"), only(pdf("it's.pdf")));
 });
 
-test("attaches a double-quoted path", async () => {
+test("attaches a double-quoted path, including escaped quotes in it", async () => {
 	assert.deepEqual(await findMedia(`see "${dir}/My File.pdf" now`, "/"), only(myFile));
+	assert.deepEqual(await findMedia(`"${dir}/say \\"hi\\".pdf"`, "/"), only(pdf('say "hi".pdf')));
 });
 
 test("attaches a percent-encoded file URI", async () => {
@@ -75,6 +102,12 @@ test("attaches pasted paths with spaces, one per line, without quotes or backsla
 		attachments: [myFile],
 	});
 	assert.deepEqual(await findMedia(`  @${dir}/My File.pdf \nwhat is this?`, "/"), only(myFile));
+	assert.deepEqual(await findMedia(`see @clip.mp3\n${dir}/My File.pdf`, dir), only(clip, myFile));
+});
+
+test("attaches only the whole-line path when a shorter path at the same start also names a file", async () => {
+	const clip2 = { path: join(dir, "clip.mp3 2.mp3"), mimeType: "audio/mpeg", data: "//uQRAAAAAA=" };
+	assert.deepEqual(await findMedia(`${dir}/clip.mp3 2.mp3`, "/"), only(clip2));
 });
 
 test("finds a path with spaces only when it fills the whole line", async () => {
@@ -107,6 +140,11 @@ test("finds a macOS screenshot with a narrow no-break space before AM", async ()
 	assert.deepEqual(await findMedia(`${dir}/Screenshot\\ 2024-01-01\\ at\\ 10.00.00\u202FAM.pdf`, "/"), only(screenshot));
 });
 
+test("finds a file with a space where the typed path has a no-break space", async () => {
+	assert.deepEqual(await findMedia(`${dir}/My\u00A0File.pdf`, "/"), only(myFile));
+});
+
+// The decomposed case can fail only on a file system that keeps NFC and NFD names apart, such as Linux, not on APFS.
 test("finds decomposed and curly-quote file names typed in composed form with a straight quote", async () => {
 	const image = { images: [PNG_IMAGE], attachments: [] };
 	assert.deepEqual(await findMedia(`${dir}/Caf\u00e9.png`, "/"), image);
@@ -114,15 +152,13 @@ test("finds decomposed and curly-quote file names typed in composed form with a 
 	assert.deepEqual(await findMedia(`${dir}/Capture\\ d\\'\u00e9cran.png`, "/"), image);
 });
 
-test("leaves paths that are missing, directories, empty, unsupported or inside a word or URL as text", async () => {
+test("leaves directories, paths inside a word or URL, and file URIs with a host as text", async () => {
 	for (const text of [
-		`${dir}/absent.pdf`,
 		`${dir}/sub`,
-		`${dir}/empty.pdf`,
-		`${dir}/notes.md`,
 		`https://localhost${dir}/report.pdf`,
 		`x${dir}/report.pdf`,
 		`'${dir}/report.pdf`,
+		"file://server/a.pdf",
 	]) {
 		assert.deepEqual(await findMedia(text, "/"), NOTHING);
 	}
@@ -138,35 +174,35 @@ test("finds Windows drive, UNC, relative and home paths only on Windows", () => 
 		{ text: String.raw`see ~\a.pdf now`, windows: [{ start: 4, end: 11, path: String.raw`~\a.pdf` }] },
 	];
 	for (const { text, windows } of cases) {
-		assert.deepEqual(findPathCandidates(text, "win32"), windows, text);
-		assert.deepEqual(findPathCandidates(text, "darwin"), [], text);
-		assert.deepEqual(findPathCandidates(text, "linux"), [], text);
+		assert.deepEqual(candidates(text, "win32"), windows, text);
+		assert.deepEqual(candidates(text, "darwin"), [], text);
+		assert.deepEqual(candidates(text, "linux"), [], text);
 	}
 });
 
 test("reads a backslash as a path character on Windows and as an escape elsewhere", () => {
 	const mention = String.raw`see @docs\notes.pdf now`;
-	assert.deepEqual(findPathCandidates(mention, "win32"), [{ start: 4, end: 19, path: String.raw`docs\notes.pdf` }]);
-	assert.deepEqual(findPathCandidates(mention, "darwin"), [{ start: 4, end: 19, path: "docsnotes.pdf" }]);
+	assert.deepEqual(candidates(mention, "win32"), [{ start: 4, end: 19, path: String.raw`docs\notes.pdf` }]);
+	assert.deepEqual(candidates(mention, "darwin"), [{ start: 4, end: 19, path: "docsnotes.pdf" }]);
 	const escaped = String.raw`see /a/My\ File.pdf now`;
-	assert.deepEqual(findPathCandidates(escaped, "win32"), [{ start: 4, end: 10, path: "/a/My\\" }]);
-	assert.deepEqual(findPathCandidates(escaped, "darwin"), [{ start: 4, end: 19, path: "/a/My File.pdf" }]);
+	assert.deepEqual(candidates(escaped, "win32"), [{ start: 4, end: 10, path: "/a/My\\" }]);
+	assert.deepEqual(candidates(escaped, "darwin"), [{ start: 4, end: 19, path: "/a/My File.pdf" }]);
 });
 
 test("groups a quoted Windows path with spaces", () => {
 	const double = String.raw`see "C:\Users\me\My File.pdf" now`;
-	assert.deepEqual(findPathCandidates(double, "win32"), [{ start: 4, end: 29, path: String.raw`C:\Users\me\My File.pdf` }]);
-	assert.deepEqual(findPathCandidates(double, "darwin"), []);
+	assert.deepEqual(candidates(double, "win32"), [{ start: 4, end: 29, path: String.raw`C:\Users\me\My File.pdf` }]);
+	assert.deepEqual(candidates(double, "darwin"), []);
 	const powershell = String.raw`& 'C:\Users\me\My File.pdf'`;
-	assert.deepEqual(findPathCandidates(powershell, "win32"), [{ start: 2, end: 27, path: String.raw`C:\Users\me\My File.pdf` }]);
-	assert.deepEqual(findPathCandidates(powershell, "darwin"), []);
+	assert.deepEqual(candidates(powershell, "win32"), [{ start: 2, end: 27, path: String.raw`C:\Users\me\My File.pdf` }]);
+	assert.deepEqual(candidates(powershell, "darwin"), []);
 });
 
 test("reads '' and '\\'' as one apostrophe in single quotes on Windows", () => {
-	assert.deepEqual(findPathCandidates(String.raw`& 'C:\Users\me\it''s.pdf'`, "win32"), [
+	assert.deepEqual(candidates(String.raw`& 'C:\Users\me\it''s.pdf'`, "win32"), [
 		{ start: 2, end: 25, path: String.raw`C:\Users\me\it's.pdf` },
 	]);
-	assert.deepEqual(findPathCandidates(String.raw`see 'C:\Users\me\it'\''s.pdf' now`, "win32"), [
+	assert.deepEqual(candidates(String.raw`see 'C:\Users\me\it'\''s.pdf' now`, "win32"), [
 		{ start: 4, end: 29, path: String.raw`C:\Users\me\it's.pdf` },
 	]);
 });
@@ -174,51 +210,55 @@ test("reads '' and '\\'' as one apostrophe in single quotes on Windows", () => {
 test("finds a pasted image path in the temporary directory, also inside a word", () => {
 	const uuid = "0b9f7c1e-5d2a-4c3b-9e8f-1a2b3c4d5e6f";
 	assert.deepEqual(
-		findPathCandidates(
+		candidates(
 			`seeC:\\Users\\Jane Doe\\AppData\\Local\\Temp\\pi-clipboard-${uuid}.png please`,
 			"win32",
 			String.raw`C:\Users\Jane Doe\AppData\Local\Temp`,
 		),
 		[{ start: 3, end: 93, path: `C:\\Users\\Jane Doe\\AppData\\Local\\Temp\\pi-clipboard-${uuid}.png` }],
 	);
-	assert.deepEqual(findPathCandidates(`see/var/folders/x y/T/pi-clipboard-${uuid}.png please`, "darwin", "/var/folders/x y/T"), [
+	assert.deepEqual(candidates(`see/var/folders/x y/T/pi-clipboard-${uuid}.png please`, "darwin", "/var/folders/x y/T"), [
 		{ start: 3, end: 75, path: `/var/folders/x y/T/pi-clipboard-${uuid}.png` },
 	]);
-	assert.deepEqual(findPathCandidates(`see/other/pi-clipboard-${uuid}.png`, "darwin", "/var/folders/x y/T"), []);
-	assert.deepEqual(findPathCandidates(`C:\\pi-clipboard-${uuid}.gif`, "win32", "C:\\").slice(0, 1), [
+	assert.deepEqual(candidates(`see/other/pi-clipboard-${uuid}.png`, "darwin", "/var/folders/x y/T"), []);
+	assert.deepEqual(candidates(`C:\\pi-clipboard-${uuid}.gif`, "win32", "C:\\").slice(0, 1), [
 		{ start: 0, end: 56, path: `C:\\pi-clipboard-${uuid}.gif` },
 	]);
 });
 
+// findLocalMedia keeps the first candidate at a start that names a file.
+function firstAtEachStart(list: { start: number }[]) {
+	return list.filter((candidate, index) => list.findIndex(({ start }) => start === candidate.start) === index);
+}
+
 test("finds pasted Windows paths with spaces, one per line", () => {
 	const text = [String.raw`C:\Users\me\My Shot.png`, String.raw`C:\Users\me\My File.pdf`].join("\r\n");
-	assert.deepEqual(findPathCandidates(text, "win32"), [
+	assert.deepEqual(firstAtEachStart(candidates(text, "win32")), [
 		{ start: 0, end: 23, path: String.raw`C:\Users\me\My Shot.png` },
-		{ start: 0, end: 14, path: String.raw`C:\Users\me\My` },
 		{ start: 25, end: 48, path: String.raw`C:\Users\me\My File.pdf` },
-		{ start: 25, end: 39, path: String.raw`C:\Users\me\My` },
 	]);
-	assert.deepEqual(findPathCandidates(text, "darwin"), []);
+	assert.deepEqual(candidates(text, "darwin"), []);
 });
 
 test("keeps trailing punctuation outside a Windows path and skips URLs", () => {
-	assert.deepEqual(findPathCandidates(String.raw`what is C:\a.pdf?`, "win32"), [
-		{ start: 8, end: 16, path: String.raw`C:\a.pdf` },
-	]);
-	assert.deepEqual(findPathCandidates(String.raw`see ("C:\My File.pdf").`, "win32"), [
+	assert.deepEqual(candidates(String.raw`what is C:\a.pdf?`, "win32"), [{ start: 8, end: 16, path: String.raw`C:\a.pdf` }]);
+	assert.deepEqual(candidates(String.raw`see ("C:\My File.pdf").`, "win32"), [
 		{ start: 5, end: 21, path: String.raw`C:\My File.pdf` },
 	]);
 	for (const platform of ["win32", "darwin"] as const) {
-		assert.deepEqual(findPathCandidates("see https://example.com/C:/a.pdf now", platform), []);
+		assert.deepEqual(candidates("see https://example.com/C:/a.pdf now", platform), []);
 	}
 });
 
 test("resolves Windows paths by pi's Windows rules", (t) => {
-	const home = process.env.HOME;
+	// os.homedir() reads HOME on macOS and Linux, and USERPROFILE on Windows.
+	const { HOME, USERPROFILE } = process.env;
 	t.after(() => {
-		process.env.HOME = home;
+		process.env.HOME = HOME;
+		process.env.USERPROFILE = USERPROFILE;
 	});
 	process.env.HOME = String.raw`C:\Users\me`;
+	process.env.USERPROFILE = String.raw`C:\Users\me`;
 	const cwd = String.raw`C:\work`;
 	const cases = [
 		[String.raw`C:\Users\me\a.pdf`, String.raw`C:\Users\me\a.pdf`],
@@ -234,8 +274,8 @@ test("resolves Windows paths by pi's Windows rules", (t) => {
 		["/cygdrive/e/a.pdf", String.raw`E:\a.pdf`],
 		["file:///C:/Users/me/My%20File.pdf", String.raw`C:\Users\me\My File.pdf`],
 	];
-	for (const [path, expected] of cases) assert.equal(resolvePath(path, cwd, "win32"), expected, path);
-	assert.equal(resolvePath("a.pdf", "/c/work", "win32"), String.raw`C:\work\a.pdf`);
+	for (const [path, expected] of cases) assert.equal(resolveOn("win32", path, cwd), expected, path);
+	assert.equal(resolveOn("win32", "a.pdf", "/c/work"), String.raw`C:\work\a.pdf`);
 });
 
 test("keeps Windows-only rules off on macOS and Linux", (t) => {
@@ -244,8 +284,8 @@ test("keeps Windows-only rules off on macOS and Linux", (t) => {
 		process.env.HOME = home;
 	});
 	process.env.HOME = "/home/me";
-	assert.equal(resolvePath("/c/Users/me/a.pdf", "/work", "linux"), "/c/Users/me/a.pdf");
-	assert.equal(resolvePath("/mnt/d/a.pdf", "/work", "linux"), "/mnt/d/a.pdf");
-	assert.equal(resolvePath(String.raw`~\a.pdf`, "/work", "darwin"), String.raw`/work/~\a.pdf`);
-	assert.equal(resolvePath("~/a.pdf", "/work", "darwin"), "/home/me/a.pdf");
+	assert.equal(resolveOn("linux", "/c/Users/me/a.pdf", "/work"), "/c/Users/me/a.pdf");
+	assert.equal(resolveOn("linux", "/mnt/d/a.pdf", "/work"), "/mnt/d/a.pdf");
+	assert.equal(resolveOn("darwin", String.raw`~\a.pdf`, "/work"), String.raw`/work/~\a.pdf`);
+	assert.equal(resolveOn("darwin", "~/a.pdf", "/work"), "/home/me/a.pdf");
 });

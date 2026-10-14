@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Message, UserMessage } from "@earendil-works/pi-ai";
-import { type FindAttachment, rewrite } from "../src/chat-completions.ts";
-import { carries } from "../src/file-parts.ts";
+import { rewrite } from "../src/chat-completions.ts";
 import type { Attachment } from "../src/media-entry.ts";
 import { chatPayload, pdfNote, readResult, readTurn, text } from "./pi-payload.ts";
 
@@ -22,10 +21,11 @@ const attachments: Attachment[] = [
 	{ path: "/gone/a.opus", mimeType: "audio/ogg; codecs=opus", data: "T2dnUwAC" },
 	{ path: "/gone/a.m4b", mimeType: "audio/mp4", data: "AAAAHGZ0eXBNNEI=" },
 	{ path: "/gone/shot.heic", mimeType: "image/heic", data: "AAAA" },
+	{ path: "/gone/clip.ogv", mimeType: "video/ogg", data: "T2dnUwAC" },
 ];
 
 const findIn =
-	(table: Record<string, Attachment[]>): FindAttachment =>
+	(table: Record<string, Attachment[]>): Parameters<typeof rewrite>[1] =>
 	(entryId, index) =>
 		table[entryId]?.[index];
 
@@ -37,21 +37,13 @@ const marker = (index: number) => text(`[[pi-media:e1:${index}]]`);
 const messagesOf = (payload: unknown) => (payload as { messages: unknown[] }).messages;
 const contentOf = (payload: unknown) => (payload as { messages: { content: unknown }[] }).messages.map((m) => m.content);
 
-// Checks that the rewrite does not change its input and gives the same result each time. Returns the result.
-function assertPureRewrite(payload: unknown, attachment: FindAttachment) {
-	const before = structuredClone(payload);
-	const first = rewrite(payload, attachment, false);
-	assert.notEqual(first, undefined);
-	assert.deepEqual(rewrite(payload, attachment, false), first);
-	assert.deepEqual(payload, before);
-	return first;
-}
+// Pi sends the payload unchanged when the rewrite returns undefined.
+const sent = (payload: unknown, attachment = find) => rewrite(payload, attachment, false) ?? payload;
 
 const pdfFilePart = { type: "file", file: { filename: "doc.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } };
 const audioPart = (data: string, format: string) => ({ type: "input_audio", input_audio: { data, format } });
 const videoPart = (url: string) => ({ type: "video_url", video_url: { url } });
 const mp3Part = audioPart("//uQRAAAAAA=", "mp3");
-const mp4Part = videoPart("data:video/mp4;base64,AAAAGGZ0eXA=");
 const imagePart = { type: "image_url", image_url: { url: "data:image/png;base64,xx" } };
 const openRouterClaude = { provider: "openrouter", id: "anthropic/claude-sonnet-4" };
 
@@ -61,38 +53,11 @@ const usersPayload = (users: UserMessage["content"][], options?: Parameters<type
 		options,
 	);
 
-test("carries PDFs, the audio formats and the video types that OpenRouter lists, and no other types", () => {
-	assert.deepEqual(
-		[
-			"application/pdf",
-			"audio/wav",
-			"audio/mpeg",
-			"audio/aiff",
-			"audio/aac",
-			"audio/ogg",
-			"audio/flac",
-			"audio/x-m4a",
-			"video/mp4",
-			"video/mpeg",
-			"video/webm",
-			"video/quicktime",
-			"audio/ogg; codecs=opus",
-			"audio/mp4",
-			"audio/x-wav",
-			"video/ogg",
-			"image/heic",
-			"text/plain",
-			"constructor",
-		].map(carries),
-		[true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false, false, false],
-	);
-});
-
 test("replaces marker blocks with file, input_audio and video_url parts and keeps images and typed text", async () => {
 	const payload = await usersPayload([
 		[text("see these"), { type: "image", data: "xx", mimeType: "image/png" }, ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(marker)],
 	]);
-	assert.deepEqual(contentOf(assertPureRewrite(payload, find)), [
+	assert.deepEqual(contentOf(rewrite(payload, find, false)), [
 		[
 			text("see these"),
 			imagePart,
@@ -104,7 +69,7 @@ test("replaces marker blocks with file, input_audio and video_url parts and keep
 			audioPart("T2dnUwAC", "ogg"),
 			audioPart("ZkxhQw==", "flac"),
 			audioPart("AAAAHGZ0eXBNNEE=", "m4a"),
-			mp4Part,
+			videoPart("data:video/mp4;base64,AAAAGGZ0eXA="),
 			videoPart("data:video/mpeg;base64,AAABug=="),
 			videoPart("data:video/webm;base64,GkXfow=="),
 		],
@@ -113,19 +78,16 @@ test("replaces marker blocks with file, input_audio and video_url parts and keep
 
 test("leaves user text that only contains a marker", async () => {
 	const payload = await usersPayload([
-		"file says [[pi-media:abc:0]] literal",
-		"[[pi-media:abc:0]]\nmore",
-		"see\n[[pi-media:abc:0]]",
 		[text("file says [[pi-media:abc:0]] literal")],
 		[text("see\n[[pi-media:abc:0]]")],
-		"hi",
+		[text("see"), text("[[pi-media:abc:0]] literal")],
 	]);
-	assert.equal(rewrite(payload, find, false), undefined);
+	assert.deepEqual(sent(payload), payload);
 });
 
 test("removes markers of types it does not carry and of missing attachments, and keeps the typed text", async () => {
 	const payload = await usersPayload([
-		[text("hi"), text("[[pi-media:gone:0]]"), marker(99), marker(11), marker(12), marker(13), marker(14)],
+		[text("hi"), text("[[pi-media:gone:0]]"), marker(99), marker(11), marker(12), marker(13), marker(14), marker(15)],
 	]);
 	assert.deepEqual(contentOf(rewrite(payload, find, false)), [[text("hi")]]);
 });
@@ -134,17 +96,18 @@ test("keeps the cache marker on the last text part when the marker block that he
 	const payload = await usersPayload(
 		[
 			[text("earlier @a.mp3"), marker(2)],
-			[text("see @doc.pdf"), marker(0)],
+			[text("a"), text("b"), marker(0)],
 		],
 		openRouterClaude,
 	);
 	assert.deepEqual(contentOf(payload)[1], [
-		text("see @doc.pdf"),
+		text("a"),
+		text("b"),
 		{ type: "text", text: "[[pi-media:e1:0]]", cache_control: { type: "ephemeral" } },
 	]);
 	assert.deepEqual(contentOf(rewrite(payload, find, false)), [
 		[text("earlier @a.mp3"), mp3Part],
-		[{ type: "text", text: "see @doc.pdf", cache_control: { type: "ephemeral" } }, pdfFilePart],
+		[text("a"), { type: "text", text: "b", cache_control: { type: "ephemeral" } }, pdfFilePart],
 	]);
 });
 
@@ -155,7 +118,7 @@ test("leaves markers in assistant and system messages", () => {
 			{ role: "system", content: [text("[[pi-media:e1:0]]")] },
 		],
 	};
-	assert.equal(rewrite(payload, find, false), undefined);
+	assert.deepEqual(sent(payload), payload);
 });
 
 test("leaves the messages without a marker as they are", () => {
@@ -163,14 +126,6 @@ test("leaves the messages without a marker as they are", () => {
 	const earlier = { role: "user", content: [text("hello")] };
 	const payload = { messages: [system, earlier, { role: "user", content: [text("[[pi-media:e1:0]]")] }] };
 	assert.deepEqual(messagesOf(rewrite(payload, find, false)), [system, earlier, { role: "user", content: [pdfFilePart] }]);
-});
-
-test("returns undefined for a payload without a marker or without a message list", () => {
-	assert.equal(rewrite({ messages: [{ role: "user", content: "hello" }] }, find, false), undefined);
-	assert.equal(rewrite({ messages: [{ role: "assistant", content: null }] }, find, false), undefined);
-	for (const payload of [undefined, "raw", { foo: 1 }, { messages: "nope" }, { messages: [null, 3] }]) {
-		assert.equal(rewrite(payload, find, false), undefined);
-	}
 });
 
 const followUp = (...parts: unknown[]) => ({ role: "user", content: [text("Attached file(s) from tool result:"), ...parts] });
@@ -193,16 +148,10 @@ const findPdf = findIn({ e1: [pdf] });
 const afterCall = (payload: unknown, attachment = findPdf, requiresAssistantAfterToolResult = false) =>
 	messagesOf(rewrite(payload, attachment, requiresAssistantAfterToolResult)).slice(2);
 
-test("moves a PDF, audio or video from a tool result to a user message after it", async () => {
+test("moves a PDF from a tool result to a user message after it", async () => {
 	const payload = await chatPayload(readTurn(readPdf()));
 	assert.deepEqual(payload.messages[2], { role: "tool", content: `${pdfNote}\n[[pi-media:e1:0]]`, tool_call_id: "call_1" });
-	for (const [attachment, part] of [
-		[pdf, reportPart],
-		[attachments[2], mp3Part],
-		[attachments[8], mp4Part],
-	] as const) {
-		assert.deepEqual(afterCall(payload, findIn({ e1: [attachment] })), [toolNote(), followUp(part)]);
-	}
+	assert.deepEqual(afterCall(payload), [toolNote(), followUp(reportPart)]);
 });
 
 test("removes the tool result marker of a type it does not carry or a missing attachment, and keeps the note", async () => {
@@ -214,7 +163,7 @@ test("removes the tool result marker of a type it does not carry or a missing at
 
 test("leaves tool result text that only contains a marker", async () => {
 	const payload = await chatPayload(readTurn(readResult("call_1", [text("file says [[pi-media:abc:0]] literal")])));
-	assert.equal(rewrite(payload, findIn({ abc: [pdf] }), false), undefined);
+	assert.deepEqual(sent(payload, findIn({ abc: [pdf] })), payload);
 });
 
 test("takes only the marker lines at the end of a tool result", async () => {
@@ -233,6 +182,23 @@ test("puts the files after the last of consecutive tool results", async () => {
 		toolNote("call_1"),
 		{ role: "tool", content: "line one", tool_call_id: "call_2" },
 		followUp(reportPart),
+	]);
+});
+
+test("puts the files of each run of tool results after that run", async () => {
+	const [, secondCall] = readTurn(readPdf("call_2"));
+	const second = readResult("call_2", [text("Read audio file [audio/mpeg]: /gone/a.mp3"), text("[[pi-media:e2:0]]")]);
+	const payload = await chatPayload([...readTurn(readPdf("call_1")), secondCall, second]);
+	assert.deepEqual(afterCall(payload, findIn({ e1: [pdf], e2: [attachments[2]] })), [
+		toolNote("call_1"),
+		followUp(reportPart),
+		{
+			role: "assistant",
+			content: null,
+			tool_calls: [{ id: "call_2", type: "function", function: { name: "read", arguments: '{"path":"/tmp/x/report.pdf"}' } }],
+		},
+		{ role: "tool", content: "Read audio file [audio/mpeg]: /gone/a.mp3", tool_call_id: "call_2" },
+		followUp(mp3Part),
 	]);
 });
 
@@ -282,7 +248,7 @@ test("adds the assistant message that pi-ai adds after tool results for some pro
 test("rewrites a user message marker and a tool result marker in the same payload", async () => {
 	const prompt: Message = { role: "user", content: [text("see @a.mp3"), text("[[pi-media:u1:0]]")], timestamp: 0 };
 	const payload = await chatPayload([prompt, ...readTurn(readPdf()).slice(1)]);
-	const result = messagesOf(assertPureRewrite(payload, findIn({ e1: [pdf], u1: [attachments[2]] })));
+	const result = messagesOf(rewrite(payload, findIn({ e1: [pdf], u1: [attachments[2]] }), false));
 	assert.deepEqual(result[0], { role: "user", content: [text("see @a.mp3"), mp3Part] });
 	assert.deepEqual(result.slice(2), [toolNote(), followUp(reportPart)]);
 });

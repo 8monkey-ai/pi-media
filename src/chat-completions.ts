@@ -4,7 +4,7 @@ import { isRecord } from "./is-record.ts";
 import { takeMarkers } from "./marker.ts";
 import type { Attachment } from "./media-entry.ts";
 
-export type FindAttachment = (entryId: string, index: number) => Attachment | undefined;
+type FindAttachment = (entryId: string, index: number) => Attachment | undefined;
 type Message = Record<string, unknown>;
 
 const textOf = (node: unknown) =>

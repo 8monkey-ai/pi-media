@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -37,6 +37,11 @@ test("uses 20 MB when the config file has no maxAttachmentBytes and ignores othe
 test("reads maxAttachmentBytes from pi-media.json in the agent directory", async () => {
 	await writeConfig('{"maxAttachmentBytes": 1048576}');
 	assert.equal(readMaxAttachmentBytes(), 1048576);
+});
+
+test("fails when the config path exists but cannot be read as a file", async () => {
+	await mkdir(join(agentDir, "pi-media.json"));
+	assert.throws(() => readMaxAttachmentBytes(), { code: "EISDIR" });
 });
 
 test("fails with the file path when the config file is not valid JSON", async () => {

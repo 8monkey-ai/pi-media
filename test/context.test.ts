@@ -6,6 +6,9 @@ import { markContext } from "../src/context.ts";
 const carriesAll = () => true;
 const carriesAudio = (mimeType: string) => mimeType.startsWith("audio/");
 
+// Pi sends the messages unchanged when the context handler returns undefined.
+const sent = (...args: Parameters<typeof markContext>) => markContext(...args)?.messages ?? args[0];
+
 function sessionWithMedia() {
 	const session = SessionManager.inMemory("/");
 	const entryId = session.appendCustomEntry("pi-media", {
@@ -54,26 +57,32 @@ test("marks only the attachments that the request carries", () => {
 	});
 });
 
-test("returns undefined when the request carries none of the attachments or no files at all", () => {
+test("leaves the messages as they are when the request carries none of the attachments or no files at all", () => {
 	const { branch, messages } = sessionWithMedia();
-	assert.equal(
-		markContext(messages, branch, () => false),
-		undefined,
+	assert.deepEqual(
+		sent(messages, branch, () => false),
+		messages,
 	);
-	assert.equal(markContext(messages, branch, undefined), undefined);
+	assert.deepEqual(sent(messages, branch, undefined), messages);
 });
 
-test("returns undefined when no user message has media", () => {
+test("leaves the messages as they are when no user message has media", () => {
 	const session = SessionManager.inMemory("/");
 	session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
-	assert.equal(markContext([{ role: "user", content: "hello", timestamp: 1 }], session.getBranch(), carriesAll), undefined);
+	const messages = [{ role: "user" as const, content: "hello", timestamp: 1 }];
+	assert.deepEqual(sent(messages, session.getBranch(), carriesAll), messages);
 });
 
-test("ignores a pi-media entry whose attachments do not have the attachment shape", () => {
+test("ignores custom entries of other extensions and pi-media entries without the attachment shape", () => {
 	const session = SessionManager.inMemory("/");
 	session.appendCustomEntry("pi-media", { text: "look", attachments: [{ path: 1 }] });
+	session.appendCustomEntry("other-ext", {
+		text: "look",
+		attachments: [{ path: "/a.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
+	});
 	session.appendMessage({ role: "user", content: "look", timestamp: 1 });
-	assert.equal(markContext([{ role: "user", content: "look", timestamp: 1 }], session.getBranch(), carriesAll), undefined);
+	const messages = [{ role: "user" as const, content: "look", timestamp: 1 }];
+	assert.deepEqual(sent(messages, session.getBranch(), carriesAll), messages);
 });
 
 function readResult(toolCallId: string, timestamp: number, path: string) {
@@ -132,7 +141,7 @@ test("marks only read results whose details hold an attachment", () => {
 	for (const [name, result] of Object.entries(results)) {
 		const session = SessionManager.inMemory("/");
 		session.appendMessage(result);
-		assert.equal(markContext([result], session.getBranch(), carriesAll), undefined, name);
+		assert.deepEqual(sent([result], session.getBranch(), carriesAll), [result], name);
 	}
 });
 

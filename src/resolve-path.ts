@@ -27,8 +27,9 @@ function normalize(path: string, { path: paths, windows, toNativePath, homePrefi
 }
 
 // Returns the absolute path pi's `read` tool would use, before it tries the file name variants.
-export function resolvePath(path: string, cwd: string, platform = process.platform) {
-	const rules = platform === "win32" ? WINDOWS : POSIX;
+// Exported for tests, because a Windows path cannot name an existing file on macOS or Linux.
+export function resolvePath(path: string, cwd: string) {
+	const rules = process.platform === "win32" ? WINDOWS : POSIX;
 	const spaced = path.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
 	const expanded = normalize(spaced.startsWith("@") ? spaced.slice(1) : spaced, rules);
 	const { isAbsolute, resolve } = rules.path;

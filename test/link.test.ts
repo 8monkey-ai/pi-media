@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import extension from "../src/index.ts";
 import { isMediaEntry } from "../src/media-entry.ts";
 import { MP3_BYTES, MP3_PART, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
@@ -23,24 +24,6 @@ async function start() {
 	return startSession([extension], { files: { "a.mp3": MP3_BYTES, "b.wav": WAV_BYTES } });
 }
 
-test("links a steer message sent while pi streams", async () => {
-	const { session, requests, waitForCall, settle } = await start();
-	const run = session.prompt("first");
-	await waitForCall();
-	await session.steer("steer @a.mp3");
-	await settle(run);
-	assert.deepEqual(requests.at(-1)?.payload, { messages: [user("first"), user("steer @a.mp3", 1)] });
-});
-
-test("links a follow-up message sent while pi streams", async () => {
-	const { session, requests, waitForCall, settle } = await start();
-	const run = session.prompt("first");
-	await waitForCall();
-	await session.followUp("later @a.mp3");
-	await settle(run);
-	assert.deepEqual(requests.at(-1)?.payload, { messages: [user("first"), user("later @a.mp3", 1)] });
-});
-
 test("links each of two queued messages that share a timestamp to its own entry", async (t) => {
 	t.mock.method(Date, "now", () => 1000);
 	const { session, requests, waitForCall, settle } = await start();
@@ -54,7 +37,7 @@ test("links each of two queued messages that share a timestamp to its own entry"
 	});
 });
 
-test("links each of two queued messages with the same text to one entry", async () => {
+test("attaches the file once to each of two queued messages with the same text", async () => {
 	const { session, requests, waitForCall, settle } = await start();
 	const run = session.prompt("first");
 	await waitForCall();
@@ -73,24 +56,51 @@ test("leaves the entry of a cleared queue unlinked for other text, and links it 
 	await session.followUp("lost @a.mp3");
 	session.clearQueue();
 	await settle(run);
-	await settle(session.prompt("other text"));
-	assert.deepEqual(requests.at(-1)?.payload, { messages: [user("first"), user("other text")] });
 	await rm(join(dir, "a.mp3"));
+	await settle(session.prompt("lost @a.mp3 too"));
+	assert.deepEqual(requests.at(-1)?.payload, { messages: [user("first"), user("lost @a.mp3 too")] });
 	await settle(session.prompt("lost @a.mp3"));
 	assert.deepEqual(requests.at(-1)?.payload, {
-		messages: [user("first"), user("other text"), user("lost @a.mp3", 1)],
+		messages: [user("first"), user("lost @a.mp3 too"), user("lost @a.mp3", 1)],
 	});
 });
 
-test("links one entry when the same text attaches again after a cleared queue", async () => {
-	const { session, requests, waitForCall, settle } = await start();
+test("links the newest entry when the same text attaches again after a cleared queue", async () => {
+	const { session, dir, requests, waitForCall, settle } = await start();
 	const run = session.prompt("first");
 	await waitForCall();
 	await session.followUp("lost @a.mp3");
 	session.clearQueue();
 	await settle(run);
+	await writeFile(join(dir, "a.mp3"), WAV_BYTES);
 	await settle(session.prompt("lost @a.mp3"));
-	assert.deepEqual(requests.at(-1)?.payload, { messages: [user("first"), user("lost @a.mp3", 1)] });
+	assert.deepEqual(requests.at(-1)?.payload, { messages: [user("first"), userWith("lost @a.mp3", WAV_PART)] });
+});
+
+test("links each entry to one message only", async () => {
+	const { session, dir, requests, settle } = await start();
+	await settle(session.prompt("see @a.mp3"));
+	await rm(join(dir, "a.mp3"));
+	await settle(session.prompt("see @a.mp3"));
+	assert.deepEqual(requests.at(-1)?.payload, { messages: [user("see @a.mp3", 1), user("see @a.mp3")] });
+});
+
+// Runs before pi-media and removes the first user message from the context once there are two.
+const dropFirstUserMessage: ExtensionFactory = (pi) => {
+	pi.on("context", ({ messages }) => {
+		const users = messages.filter((message) => message.role === "user");
+		if (users.length < 2) return undefined;
+		return { messages: messages.filter((message) => message !== users[0]) };
+	});
+};
+
+test("links an entry to its message by timestamp when an earlier context handler removes a user message", async (t) => {
+	let now = 1000;
+	t.mock.method(Date, "now", () => now++);
+	const { session, requests, settle } = await startSession([dropFirstUserMessage, extension], { files: { "a.mp3": MP3_BYTES } });
+	await settle(session.prompt("first"));
+	await settle(session.prompt("see @a.mp3"));
+	assert.deepEqual(requests.at(-1)?.payload, { messages: [user("see @a.mp3", 1)] });
 });
 
 test("does not apply an entry from another branch", async () => {

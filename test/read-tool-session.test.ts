@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { fauxAssistantMessage, fauxToolCall, type Message } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import extension from "../src/index.ts";
-import { MOV_BYTES } from "./fixtures.ts";
+import { MOV_BYTES, widePng } from "./fixtures.ts";
 import { startSession } from "./session-harness.ts";
 
 // The model reads the file with the read tool, then answers.
@@ -30,13 +30,14 @@ function toolPayload(messages: Message[]) {
 	};
 }
 
-async function readFile(api: string, name: string, bytes: string | Buffer) {
+async function readFile(api: string, name: string, bytes: string | Buffer, options?: Parameters<typeof startSession>[1]) {
 	const started = await startSession([extension], {
 		files: { [name]: bytes },
 		api,
 		tools: ["read"],
 		reply: readThenAnswer(name),
 		payload: toolPayload,
+		...options,
 	});
 	await started.settle(started.session.prompt(`summarize ${name}`));
 	return started;
@@ -54,23 +55,7 @@ function toolResultContents(messages: Message[]) {
 	return messages.flatMap((message) => (message.role === "toolResult" ? [message.content] : []));
 }
 
-test("stores the bytes of a PDF that the model reads in the tool result details", async () => {
-	const { session, dir } = await readPdf("openai-completions");
-	assert.deepEqual(
-		toolResultEntries(session.sessionManager.getBranch()).map(({ message }) => ({
-			content: message.content,
-			details: message.details,
-		})),
-		[
-			{
-				content: [{ type: "text", text: `Read PDF file [application/pdf]: ${join(dir, "report.pdf")}` }],
-				details: { path: join(dir, "report.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" },
-			},
-		],
-	);
-});
-
-test("marks the tool result of a Chat Completions model, and the payload carries the file after the tool message", async () => {
+test("stores the PDF bytes in the tool result details, marks the request copy, and the payload carries the file after the tool message", async () => {
 	const { session, dir, requests } = await readPdf("openai-completions");
 	const [entry] = toolResultEntries(session.sessionManager.getBranch());
 	const note = `Read PDF file [application/pdf]: ${join(dir, "report.pdf")}`;
@@ -92,13 +77,20 @@ test("marks the tool result of a Chat Completions model, and the payload carries
 			},
 		],
 	});
-	assert.deepEqual(toolResultEntries(session.sessionManager.getBranch())[0].message.content, [{ type: "text", text: note }]);
+	const { content, details } = toolResultEntries(session.sessionManager.getBranch())[0].message;
+	assert.deepEqual(
+		{ content, details },
+		{
+			content: [{ type: "text", text: note }],
+			details: { path: join(dir, "report.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" },
+		},
+	);
 });
 
 // Only Chat Completions takes files, and it does not take QuickTime video.
 for (const [api, name, bytes, kind] of [
 	["mistral-conversations", "report.pdf", "%PDF-1.4", "PDF file [application/pdf]"],
-	["test-unknown-api", "report.pdf", "%PDF-1.4", "PDF file [application/pdf]"],
+	["openai-responses", "report.pdf", "%PDF-1.4", "PDF file [application/pdf]"],
 	["openai-completions", "clip.mov", MOV_BYTES, "video file [video/quicktime]"],
 ] as const) {
 	test(`tells a model with the ${api} API that ${name} is not in the request`, async () => {
@@ -114,3 +106,13 @@ for (const [api, name, bytes, kind] of [
 		]);
 	});
 }
+
+test("reads an image unresized when the pi image auto-resize setting is off", async () => {
+	const png = widePng(2400);
+	const { session } = await readFile("openai-completions", "wide.png", png, { settings: { images: { autoResize: false } } });
+	assert.deepEqual(toolResultEntries(session.sessionManager.getBranch())[0].message.content[1], {
+		type: "image",
+		data: png.toString("base64"),
+		mimeType: "image/png",
+	});
+});

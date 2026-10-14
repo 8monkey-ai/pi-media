@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
-import { crc32, deflateSync } from "node:zlib";
 import { createReadToolDefinition, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { createMediaReadTool } from "../src/read-tool.ts";
-import { fixtureDir, MP3_BYTES, MP4_BYTES, PNG_BYTES } from "./fixtures.ts";
+import { fixtureDir, MP3_BYTES, MP4_BYTES, PNG_BYTES, widePng } from "./fixtures.ts";
 
 // The tool reads only `cwd` and `model` from the context.
 function context(cwd: string) {
@@ -19,29 +18,6 @@ async function readWithMedia(dir: string, params: ReadParams, autoResizeImages?:
 
 async function readWithPi(dir: string, params: ReadParams, autoResizeImages?: boolean) {
 	return createReadToolDefinition(dir, { autoResizeImages }).execute("call-1", params, undefined, undefined, context(dir));
-}
-
-function pngChunk(type: string, data: Buffer) {
-	const typed = Buffer.concat([Buffer.from(type), data]);
-	const length = Buffer.alloc(4);
-	length.writeUInt32BE(data.length);
-	const crc = Buffer.alloc(4);
-	crc.writeUInt32BE(crc32(typed));
-	return Buffer.concat([length, typed, crc]);
-}
-
-// A grayscale PNG one row high, wider than the 2000 pixels pi resizes to by default.
-function widePng(width: number) {
-	const header = Buffer.alloc(13);
-	header.writeUInt32BE(width, 0);
-	header.writeUInt32BE(1, 4);
-	header[8] = 8;
-	return Buffer.concat([
-		PNG_BYTES.subarray(0, 8),
-		pngChunk("IHDR", header),
-		pngChunk("IDAT", deflateSync(Buffer.alloc(width + 1))),
-		pngChunk("IEND", Buffer.alloc(0)),
-	]);
 }
 
 test("returns a note and keeps the PDF, MP3 and MP4 bytes in the details", async () => {
