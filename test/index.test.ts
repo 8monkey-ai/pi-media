@@ -3,22 +3,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { type ExtensionFactory, type InputEvent, SessionManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import extension from "../src/index.ts";
 import { MP3_BYTES, MP3_PART, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
-import { startSession } from "./session-harness.ts";
-
-// Runs after pi-media and records the input that pi-media passes on.
-function inputObserver() {
-	const inputs: Pick<InputEvent, "text" | "images">[] = [];
-	const observer: ExtensionFactory = (pi) => {
-		pi.on("input", ({ text, images }) => {
-			inputs.push({ text, images });
-			return { action: "continue" };
-		});
-	};
-	return { inputs, observer };
-}
+import { inputObserver, startSession } from "./session-harness.ts";
 
 test("stores a PDF in a pi-media entry and keeps the typed text in the user message", async () => {
 	const { session, dir, settle } = await startSession([extension], { files: { "report.pdf": "%PDF-1.4" } });

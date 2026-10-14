@@ -12,6 +12,7 @@ import {
 	createAgentSession,
 	DefaultResourceLoader,
 	type ExtensionFactory,
+	type InputEvent,
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
@@ -124,4 +125,16 @@ export async function startSession(
 	}
 
 	return { session, dir, requests, waitForCall, settle };
+}
+
+// Runs after pi-media and records the input that pi-media passes on.
+export function inputObserver() {
+	const inputs: Pick<InputEvent, "text" | "images">[] = [];
+	const observer: ExtensionFactory = (pi) => {
+		pi.on("input", ({ text, images }) => {
+			inputs.push({ text, images });
+			return { action: "continue" };
+		});
+	};
+	return { inputs, observer };
 }

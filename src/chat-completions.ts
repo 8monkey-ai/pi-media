@@ -36,25 +36,19 @@ function keepCacheControl(before: unknown[], after: unknown[]) {
 	return isText(node) ? after.with(last, { ...node, cache_control: cacheControl }) : after;
 }
 
-// pi-ai joins text blocks into one string with "\n" (`joined`).
-function splitText(text: string, joined: boolean, attachment: FindAttachment) {
-	const taken = takeMarkers(text, joined);
-	if (!taken) return undefined;
-	const parts = partsOf(taken.markers, attachment);
-	return taken.text ? [textPart(taken.text), ...parts] : parts;
+// The context hook adds each marker to a user message as a block of its own, and pi-ai keeps the blocks.
+function splitText(text: string, attachment: FindAttachment) {
+	const taken = takeMarkers(text, false);
+	return taken && partsOf(taken.markers, attachment);
 }
 
 function rewriteUserMessage(message: unknown, attachment: FindAttachment) {
 	if (!isRole(message, "user")) return undefined;
 	const { content } = message;
-	if (typeof content === "string") {
-		const parts = splitText(content, true, attachment);
-		return parts && { ...message, content: parts };
-	}
 	if (!Array.isArray(content)) return undefined;
 	const replaced = content.map((node) => {
 		const text = textOf(node);
-		return text === undefined ? undefined : splitText(text, false, attachment);
+		return text === undefined ? undefined : splitText(text, attachment);
 	});
 	if (replaced.every((nodes) => nodes === undefined)) return undefined;
 	return {
@@ -103,13 +97,9 @@ function toolRuns(messages: unknown[]) {
 	return runs;
 }
 
+// With `compat.requiresAssistantAfterToolResult`, pi-ai adds `bridge` between tool messages and a user message after
+// them.
 const bridge = { role: "assistant", content: "I have processed the tool results." };
-
-// With `compat.requiresAssistantAfterToolResult`, pi-ai writes "" in place of null as the content of an assistant
-// message without text, and adds `bridge` between tool messages and a user message after them.
-function requiresAssistantAfterToolResult(messages: unknown[]) {
-	return messages.some((message) => isRole(message, "assistant") && message.content === "");
-}
 
 // Tool messages take text only. pi-ai puts tool result images in one user message after the tool messages, after
 // `bridge` for providers that need it. The files go to the same place.
@@ -128,17 +118,16 @@ function placeAfterRun(messages: unknown[], end: number, parts: unknown[], needs
 
 // Replaces the markers in user messages and tool messages of a Chat Completions payload with file parts.
 // Markers in other messages stay. Returns undefined when the payload has no marker to replace.
-export function rewrite(payload: unknown, attachment: FindAttachment) {
+export function rewrite(payload: unknown, attachment: FindAttachment, requiresAssistantAfterToolResult: boolean) {
 	if (!isRecord(payload) || !Array.isArray(payload.messages)) return undefined;
 	const messages: unknown[] = payload.messages;
 	const users = messages.map((message) => rewriteUserMessage(message, attachment));
 	const tools = messages.map((message) => rewriteToolMessage(message, attachment));
 	if (users.every((user) => user === undefined) && tools.every((tool) => tool === undefined)) return undefined;
 	const result = messages.map((message, index) => users[index] ?? tools[index]?.message ?? message);
-	const needsBridge = requiresAssistantAfterToolResult(messages);
 	for (const { start, end } of toolRuns(messages).reverse()) {
 		const parts = tools.slice(start, end).flatMap((tool) => tool?.parts ?? []);
-		if (parts.length > 0) placeAfterRun(result, end, parts, needsBridge);
+		if (parts.length > 0) placeAfterRun(result, end, parts, requiresAssistantAfterToolResult);
 	}
 	return { ...payload, messages: result };
 }

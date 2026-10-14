@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import extension from "../src/index.ts";
 import { isMediaEntry } from "../src/media-entry.ts";
-import { MP3_BYTES, MP3_PART, WAV_BYTES } from "./fixtures.ts";
-import { startSession } from "./session-harness.ts";
+import { MP3_BYTES, MP3_PART, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
+import { inputObserver, startSession } from "./session-harness.ts";
 
 // Which user messages a pi-media entry links to, across normal, queued, cleared and branched prompts.
 
@@ -123,17 +123,25 @@ test("links a message to which pi adds image hints", async () => {
 	});
 });
 
-test("documents a known limit: does not link a message that a skill or prompt template expands", async () => {
-	const { session, requests, settle } = await start();
-	await settle(session.prompt("/skill:greet @a.mp3"));
-	await settle(session.prompt("/review @a.mp3"));
+test("stores no entry for a message that a skill or prompt template expands, and attaches its images", async () => {
+	const { inputs, observer } = inputObserver();
+	const { session, requests, settle } = await startSession([extension, observer], {
+		files: { "a.mp3": MP3_BYTES, "shot.png": PNG_BYTES },
+	});
+	await settle(session.prompt("/skill:greet @a.mp3 @shot.png"));
+	await settle(session.prompt("/review @a.mp3 @shot.png"));
+	await settle(session.prompt("see @a.mp3"));
 	assert.deepEqual(
 		session.sessionManager.getBranch().flatMap((entry) => (isMediaEntry(entry) ? [entry.data.text] : [])),
-		["/skill:greet @a.mp3", "/review @a.mp3"],
+		["see @a.mp3"],
+	);
+	assert.deepEqual(
+		inputs.map(({ images }) => images),
+		[[PNG_IMAGE], [PNG_IMAGE], undefined],
 	);
 	const payload = requests.at(-1)?.payload as { messages: { content: { type: string }[] }[] };
 	assert.deepEqual(
 		payload.messages.map((message) => message.content.map((part) => part.type)),
-		[["text"], ["text"]],
+		[["text"], ["text"], ["text", "input_audio"]],
 	);
 });
