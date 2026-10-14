@@ -8,9 +8,6 @@ import { resolveExistingPath } from "./resolve-path.ts";
 
 type ImageContent = NonNullable<InputEvent["images"]>[number];
 
-// Files above the cap stay as text: pi-media holds each attachment in memory as base64.
-export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-
 async function fileSize(path: string) {
 	try {
 		const stats = await stat(path);
@@ -42,7 +39,7 @@ export async function readAttachment(path: string, mimeType: string) {
 	return { path, mimeType, data: (await readFile(path)).toString("base64") };
 }
 
-export async function findLocalMedia(text: string, cwd: string) {
+export async function findLocalMedia(text: string, cwd: string, maxBytes: number) {
 	let attachedEnd = 0;
 	const attachedPaths = new Set<string>();
 	const images: ImageContent[] = [];
@@ -50,7 +47,7 @@ export async function findLocalMedia(text: string, cwd: string) {
 	for (const { start, end, path } of findPathCandidates(text)) {
 		if (start < attachedEnd) continue;
 		const file = await findMediaFile(path, cwd);
-		if (!file || file.size > MAX_ATTACHMENT_BYTES) continue;
+		if (!file || file.size > maxBytes) continue;
 		if (attachedPaths.has(file.path)) {
 			attachedEnd = end;
 			continue;

@@ -69,7 +69,7 @@ pi-media attaches a file when all of these conditions are true:
 
 - The path points to a file, not to a directory.
 - The file is not empty.
-- The file is not larger than 20 MiB.
+- The file is not larger than `maxAttachmentBytes`, 20 MiB by default (see [Settings](#settings)).
 - The file has one of these types:
 
 | Kind | Types |
@@ -122,10 +122,10 @@ For an audio, video or PDF file, the tool result is a short note, and the model 
 Read PDF file [application/pdf]: /Users/me/report.pdf
 ```
 
-If the file is larger than 20 MiB, the model gets this note and no file:
+If the file is larger than `maxAttachmentBytes`, the model gets this note and no file:
 
 ```
-PDF file [application/pdf] is larger than the pi-media limit of 20971520 bytes: /Users/me/report.pdf
+PDF file [application/pdf] is larger than the pi-media limit maxAttachmentBytes (20971520 bytes): /Users/me/report.pdf
 ```
 
 If pi-media cannot send the file type to the model (see [Providers](#providers)), the model gets this note after the tool result, and no file:
@@ -137,6 +137,30 @@ If pi-media cannot send the file type to the model (see [Providers](#providers))
 Chat Completions tool messages take only text, so the file goes in a user message after the tool messages. If pi has added a user message for tool result images there, pi-media adds the file to it. If not, pi-media adds a user message that starts with the text `Attached file(s) from tool result:`. For a model with `compat.requiresAssistantAfterToolResult`, an assistant message with the text `I have processed the tool results.` comes before that user message.
 
 If another extension also registers a `read` tool, pi uses the `read` tool of the extension that loads first.
+
+## Settings
+
+pi-media reads its settings from the file `pi-media.json` in the pi agent directory. This file is `~/.pi/agent/pi-media.json`, or `$PI_CODING_AGENT_DIR/pi-media.json` if you set `PI_CODING_AGENT_DIR`. If the file or a setting is missing, pi-media uses the default.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `maxAttachmentBytes` | `20971520` (20 MiB) | The size in bytes of the largest file that pi-media attaches, from your message or from the `read` tool. A larger file in your message stays as path text. pi-media holds each attached file in memory as base64 text, so a larger value can use more memory. |
+
+Example, for a limit of 50 MiB:
+
+```json
+{
+  "maxAttachmentBytes": 52428800
+}
+```
+
+- pi-media reads the file when pi loads extensions. After you change the file, run `/reload` or start pi again.
+- pi-media ignores keys that it does not know.
+- pi-media does not load, and pi shows an error with the path of the file, in these cases:
+  - The file is not valid JSON.
+  - The JSON value is not an object, for example an array or a number.
+  - `maxAttachmentBytes` is not a positive integer.
+  - pi-media cannot read a file that exists.
 
 ## Limits
 

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { crc32, deflateSync } from "node:zlib";
@@ -15,7 +14,7 @@ function context(cwd: string) {
 type ReadParams = { path: string; offset?: number; limit?: number };
 
 async function readWithMedia(dir: string, params: ReadParams, autoResizeImages?: boolean) {
-	return createMediaReadTool(() => autoResizeImages).execute("call-1", params, undefined, undefined, context(dir));
+	return createMediaReadTool(() => autoResizeImages, 20971520).execute("call-1", params, undefined, undefined, context(dir));
 }
 
 async function readWithPi(dir: string, params: ReadParams, autoResizeImages?: boolean) {
@@ -100,20 +99,22 @@ test("fails for a missing file with the error of pi's read tool", async () => {
 });
 
 test("tells the model that the tool also reads audio, video and PDF files", () => {
-	assert.match(createMediaReadTool(() => undefined).description, /Also reads audio, video and PDF files\./);
+	assert.match(createMediaReadTool(() => undefined, 20971520).description, /Also reads audio, video and PDF files\./);
 });
 
-test("returns a note without the bytes for a media file larger than 20 MiB", async () => {
-	const dir = await fixtureDir({ "report.pdf": "%PDF-1.4", "a.mp3": MP3_BYTES, "max.pdf": "%PDF-1.4" });
-	await truncate(join(dir, "report.pdf"), 20971521);
-	await truncate(join(dir, "a.mp3"), 20971521);
-	await truncate(join(dir, "max.pdf"), 20971520);
-	const read = (path: string) => readWithMedia(dir, { path });
+test("returns a note without the bytes for a media file larger than the size cap", async () => {
+	const dir = await fixtureDir({
+		"report.pdf": "%PDF-1.4 ",
+		"a.mp3": Buffer.concat([MP3_BYTES, Buffer.alloc(1)]),
+		"max.pdf": "%PDF-1.4",
+	});
+	const read = (path: string) =>
+		createMediaReadTool(() => undefined, 8).execute("call-1", { path }, undefined, undefined, context(dir));
 	assert.deepEqual(await read("report.pdf"), {
 		content: [
 			{
 				type: "text",
-				text: `PDF file [application/pdf] is larger than the pi-media limit of 20971520 bytes: ${join(dir, "report.pdf")}`,
+				text: `PDF file [application/pdf] is larger than the pi-media limit maxAttachmentBytes (8 bytes): ${join(dir, "report.pdf")}`,
 			},
 		],
 		details: undefined,
@@ -122,14 +123,14 @@ test("returns a note without the bytes for a media file larger than 20 MiB", asy
 		content: [
 			{
 				type: "text",
-				text: `audio file [audio/mpeg] is larger than the pi-media limit of 20971520 bytes: ${join(dir, "a.mp3")}`,
+				text: `audio file [audio/mpeg] is larger than the pi-media limit maxAttachmentBytes (8 bytes): ${join(dir, "a.mp3")}`,
 			},
 		],
 		details: undefined,
 	});
-	const { details } = await read("max.pdf");
-	assert.deepEqual(
-		{ path: details?.path, mimeType: details?.mimeType },
-		{ path: join(dir, "max.pdf"), mimeType: "application/pdf" },
-	);
+	assert.deepEqual((await read("max.pdf")).details, {
+		path: join(dir, "max.pdf"),
+		mimeType: "application/pdf",
+		data: "JVBERi0xLjQ=",
+	});
 });

@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { rewrite } from "./chat-completions.ts";
+import { readMaxAttachmentBytes } from "./config.ts";
 import { markContext } from "./context.ts";
 import { carries } from "./file-parts.ts";
 import { findLocalMedia } from "./media.ts";
@@ -11,10 +12,11 @@ import { createMediaReadTool } from "./read-tool.ts";
 const takesFiles = (model: { api: string } | undefined) => model?.api === "openai-completions";
 
 export default function (pi: ExtensionAPI) {
-	pi.registerTool(createMediaReadTool(() => pi.getSettings().images?.autoResize));
+	const maxAttachmentBytes = readMaxAttachmentBytes();
+	pi.registerTool(createMediaReadTool(() => pi.getSettings().images?.autoResize, maxAttachmentBytes));
 
 	pi.on("input", async (event, ctx) => {
-		const { images, attachments } = await findLocalMedia(event.text, ctx.cwd);
+		const { images, attachments } = await findLocalMedia(event.text, ctx.cwd, maxAttachmentBytes);
 		if (attachments.length > 0) pi.appendEntry(ENTRY_TYPE, { text: event.text, attachments } satisfies MediaEntryData);
 		if (images.length === 0) return { action: "continue" };
 		return { action: "transform", text: event.text, images: [...(event.images ?? []), ...images] };

@@ -34,6 +34,18 @@ type SessionOptions = {
 	payload?: (messages: Message[]) => unknown;
 };
 
+// Extensions find their config through `getAgentDir()`, so it names the session directory while they load.
+async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: string) {
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		await resourceLoader.reload();
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+	}
+}
+
 // Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
 // A model call waits until `settle` runs, so a test can queue input while pi streams.
 // `files` go into the working directory, which is also the agent directory. `sessionManager` defaults to an in-memory one.
@@ -82,7 +94,7 @@ export async function startSession(
 		additionalSkillPaths: [join(dir, "skills")],
 		additionalPromptTemplatePaths: [join(dir, "prompts")],
 	});
-	await resourceLoader.reload();
+	await loadExtensions(resourceLoader, dir);
 	const { session } = await createAgentSession({
 		cwd: dir,
 		agentDir: dir,

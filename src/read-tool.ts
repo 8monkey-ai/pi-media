@@ -1,5 +1,5 @@
 import { createReadToolDefinition, type ReadToolDetails, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { findMediaFile, MAX_ATTACHMENT_BYTES, readAttachment } from "./media.ts";
+import { findMediaFile, readAttachment } from "./media.ts";
 import type { Attachment } from "./media-entry.ts";
 
 type PiReadTool = ReturnType<typeof createReadToolDefinition>;
@@ -15,6 +15,7 @@ function kindName(mimeType: string) {
 // `autoResizeImages` is a function so that a changed pi setting applies on the next read.
 export function createMediaReadTool(
 	autoResizeImages: () => boolean | undefined,
+	maxBytes: number,
 ): ToolDefinition<PiReadTool["parameters"], ReadDetails> {
 	// Only the name, schema, prompt text and renderers come from this definition. `execute` uses the cwd of the session.
 	const piRead = createReadToolDefinition(process.cwd());
@@ -29,8 +30,8 @@ export function createMediaReadTool(
 			}
 			const kind = `${kindName(file.mimeType)} file [${file.mimeType}]`;
 			// Pi's read tool would return the bytes of a large media file as text, so the model gets only this note.
-			if (file.size > MAX_ATTACHMENT_BYTES) {
-				const text = `${kind} is larger than the pi-media limit of ${MAX_ATTACHMENT_BYTES} bytes: ${file.path}`;
+			if (file.size > maxBytes) {
+				const text = `${kind} is larger than the pi-media limit maxAttachmentBytes (${maxBytes} bytes): ${file.path}`;
 				return { content: [{ type: "text", text }], details: undefined };
 			}
 			return {
