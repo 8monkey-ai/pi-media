@@ -20,6 +20,13 @@ export const MP4_BYTES = Buffer.concat([
 	Buffer.from("mp42isom"),
 ]);
 
+export const MOV_BYTES = Buffer.concat([
+	Buffer.from([0, 0, 0, 0x14]),
+	Buffer.from("ftypqt  "),
+	Buffer.alloc(4),
+	Buffer.from("qt  "),
+]);
+
 // The image content that pi gets for PNG_BYTES.
 export const PNG_IMAGE = { type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ", mimeType: "image/png" };
 

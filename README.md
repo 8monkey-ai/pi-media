@@ -1,6 +1,6 @@
 # pi-media
 
-pi-media is a [pi](https://github.com/earendil-works/pi) extension that attaches local images, audio, video and PDF files to your message when you write their paths in it.
+pi-media is a [pi](https://github.com/earendil-works/pi) extension that attaches local images, audio, video and PDF files to your message when you write their paths in it. The model can also read audio, video and PDF files with the `read` tool.
 
 ## Install
 
@@ -85,7 +85,7 @@ If a condition is false, the path stays as text and no file attaches.
 - Animated PNG, HEIC and HEIF files stay as text.
 - Your message text stays as you typed it, with the paths in it.
 - pi-media gives images to pi. Pi handles them as it handles other images in a message. For example, the settings `images.autoResize` and `images.blockImages` apply, and a model without image input gets a text note instead of the image.
-- pi-media reads an audio, video or PDF file when you send the message. It stores the bytes in the session as base64 text, which is about 1.33 times the file size.
+- pi-media reads an audio, video or PDF file when you send the message. It stores the bytes in the session as base64 text, which is about 1.33 times the file size. It stores the files that the `read` tool reads in the same way.
 - Later turns and resumed sessions use the stored bytes. If you change or delete the file, the model still gets the file as it was when pi-media read it.
 - A file that you name two times in one message attaches one time.
 
@@ -93,7 +93,7 @@ If a condition is false, the path stays as text and no file attaches.
 
 Only models with the OpenAI Chat Completions API (`openai-completions`) get audio, video and PDF files. This applies to all providers that use this API, for example OpenRouter. Images go through pi, as [What gets attached](#what-gets-attached) states.
 
-pi-media sends these types in the part forms that OpenRouter documents:
+pi-media sends these types in the part forms that OpenRouter documents, in your message and in read tool results:
 
 | Kind | Types | Part |
 |---|---|---|
@@ -106,11 +106,37 @@ Not all providers accept all of these parts:
 - OpenAI's own API accepts only PDF, and audio in WAV and MP3. It has no `video_url` part.
 - Hebo Gateway does not accept `video_url` parts or the audio formats `aac` and `aiff`.
 
-A provider that rejects a part, or a request that is too large, returns an error, and pi shows it. pi-media stores the file in the session, so each later turn on that branch sends the file again and fails in the same way. To continue, switch to a different model, or use `/tree` to go back to a point before the message with the file.
+A provider that rejects a part, or a request that is too large, returns an error, and pi shows it. pi-media stores the file in the session, so each later turn on that branch sends the file again and fails in the same way. To continue, switch to a different model, or use `/tree` to go back to a point before the message or the read tool result with the file.
 
 All other APIs get no files. Virtual models (`pi-virtual`) also get no files, because pi-media sees only the API `pi-virtual` and not the API of the model that answers.
 
-When pi-media does not send a file, because the API gets no files or the type is not in the table (for example Opus audio or MOV video), the path stays as text in your message.
+When pi-media does not send a file, because the API gets no files or the type is not in the table (for example Opus audio or MOV video), the path stays as text in your message. In a read tool result, the model gets the note in [The read tool](#the-read-tool).
+
+## The read tool
+
+pi-media registers its own `read` tool in place of pi's `read` tool. The tool description tells the model that the tool also reads audio, video and PDF files. For all other files, images too, the tool runs pi's `read` tool, and the result is the same as without pi-media.
+
+For an audio, video or PDF file, the tool result is a short note, and the model gets the file with it. For example:
+
+```
+Read PDF file [application/pdf]: /Users/me/report.pdf
+```
+
+If the file is larger than 20 MiB, the model gets this note and no file:
+
+```
+PDF file [application/pdf] is larger than the pi-media limit of 20971520 bytes: /Users/me/report.pdf
+```
+
+If pi-media cannot send the file type to the model (see [Providers](#providers)), the model gets this note after the tool result, and no file:
+
+```
+[The API of the current model cannot take this file type. The file content is not in this request.]
+```
+
+Chat Completions tool messages take only text, so the file goes in a user message after the tool messages. If pi has added a user message for tool result images there, pi-media adds the file to it. If not, pi-media adds a user message that starts with the text `Attached file(s) from tool result:`. For a model with `compat.requiresAssistantAfterToolResult`, an assistant message with the text `I have processed the tool results.` comes before that user message.
+
+If another extension also registers a `read` tool, pi uses the `read` tool of the extension that loads first.
 
 ## Limits
 
@@ -118,7 +144,7 @@ When pi-media does not send a file, because the API gets no files or the type is
 - On Windows, a path without quotes that has `\'` for an apostrophe does not attach, for example `don\'t.png`. The mintty terminal of Git Bash can write a path in this form.
 - Audio, video and PDF files do not attach to a message that pi expands from a skill (`/skill:name`) or a prompt template (`/name`). Images attach.
 - pi-media stores the files of a message in a session entry of its own, and finds that entry by the message text. Each message gets the files of one entry at most. If a message does not reach the session, for example when you clear the message queue or edit a message in the session tree, its entry stays unused. A later message with the same text that attaches no files of its own then gets the files of that entry. If you queue two messages with the same text and the file changes between them, each message can get the file as it was for the other message.
-- pi-media marks the place of a file in a request with text of the form `[[pi-media:<id>:<number>]]`. If your message ends with lines that hold only text of this form, pi-media can remove these lines from the request.
+- pi-media marks the place of a file in a request with text of the form `[[pi-media:<id>:<number>]]`. If your message or a tool result ends with lines that hold only text of this form, pi-media can remove these lines from the request.
 
 ## Requirements
 

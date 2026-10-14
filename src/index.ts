@@ -4,12 +4,15 @@ import { markContext } from "./context.ts";
 import { carries } from "./file-parts.ts";
 import { findLocalMedia } from "./media.ts";
 import { ENTRY_TYPE, findAttachment, type MediaEntryData } from "./media-entry.ts";
+import { createMediaReadTool } from "./read-tool.ts";
 
 // Only the Chat Completions API gets files. Other APIs, and virtual models that hide the API that answers, get the path
 // as text.
 const takesFiles = (model: { api: string } | undefined) => model?.api === "openai-completions";
 
 export default function (pi: ExtensionAPI) {
+	pi.registerTool(createMediaReadTool(() => pi.getSettings().images?.autoResize));
+
 	pi.on("input", async (event, ctx) => {
 		const { images, attachments } = await findLocalMedia(event.text, ctx.cwd);
 		if (attachments.length > 0) pi.appendEntry(ENTRY_TYPE, { text: event.text, attachments } satisfies MediaEntryData);

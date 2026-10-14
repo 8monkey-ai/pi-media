@@ -9,7 +9,7 @@ import { resolveExistingPath } from "./resolve-path.ts";
 type ImageContent = NonNullable<InputEvent["images"]>[number];
 
 // Files above the cap stay as text: pi-media holds each attachment in memory as base64.
-const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 async function fileSize(path: string) {
 	try {
@@ -29,7 +29,7 @@ async function detectType(path: string) {
 }
 
 // The type detectors read only the start of the file, so a large file costs no more than a small one.
-async function findMediaFile(mention: string, cwd: string) {
+export async function findMediaFile(mention: string, cwd: string) {
 	const path = await resolveExistingPath(mention, cwd);
 	if (!path) return undefined;
 	const size = await fileSize(path);
@@ -38,7 +38,7 @@ async function findMediaFile(mention: string, cwd: string) {
 	return type && { path, size, ...type };
 }
 
-async function readAttachment(path: string, mimeType: string) {
+export async function readAttachment(path: string, mimeType: string) {
 	return { path, mimeType, data: (await readFile(path)).toString("base64") };
 }
 

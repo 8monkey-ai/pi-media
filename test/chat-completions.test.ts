@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { UserMessage } from "@earendil-works/pi-ai";
+import type { Message, UserMessage } from "@earendil-works/pi-ai";
 import { type FindAttachment, rewrite } from "../src/chat-completions.ts";
 import { carries } from "../src/file-parts.ts";
 import type { Attachment } from "../src/media-entry.ts";
-import { chatPayload, text } from "./pi-payload.ts";
+import { chatPayload, pdfNote, readResult, readTurn, text } from "./pi-payload.ts";
 
 const attachments: Attachment[] = [
 	{ path: "/gone/doc.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" },
@@ -175,4 +175,119 @@ test("returns undefined for a payload without a marker or without a message list
 	for (const payload of [undefined, "raw", { foo: 1 }, { messages: "nope" }, { messages: [null, 3] }]) {
 		assert.equal(rewrite(payload, find), undefined);
 	}
+});
+
+const followUp = (...parts: unknown[]) => ({ role: "user", content: [text("Attached file(s) from tool result:"), ...parts] });
+const imageFollowUp = (...parts: unknown[]) => ({
+	role: "user",
+	content: [text("Attached image(s) from tool result:"), imagePart, ...parts],
+});
+const bridge = { role: "assistant", content: "I have processed the tool results." };
+const toolNote = (toolCallId = "call_1") => ({ role: "tool", content: pdfNote, tool_call_id: toolCallId });
+
+const readPdf = (toolCallId = "call_1") => readResult(toolCallId, [text(pdfNote), text("[[pi-media:e1:0]]")]);
+const imageResult = (toolCallId: string) =>
+	readResult(toolCallId, [text("Read image file [image/png]"), { type: "image", data: "xx", mimeType: "image/png" }]);
+
+const pdf = { path: "/tmp/x/report.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" };
+const reportPart = { type: "file", file: { filename: "report.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } };
+const findPdf = findIn({ e1: [pdf] });
+
+// The messages after the assistant turn, once the rewrite has run.
+const afterCall = (payload: unknown, attachment = findPdf) => messagesOf(rewrite(payload, attachment)).slice(2);
+
+test("moves a PDF, audio or video from a tool result to a user message after it", async () => {
+	const payload = await chatPayload(readTurn(readPdf()));
+	assert.deepEqual(payload.messages[2], { role: "tool", content: `${pdfNote}\n[[pi-media:e1:0]]`, tool_call_id: "call_1" });
+	for (const [attachment, part] of [
+		[pdf, reportPart],
+		[attachments[2], mp3Part],
+		[attachments[8], mp4Part],
+	] as const) {
+		assert.deepEqual(afterCall(payload, findIn({ e1: [attachment] })), [toolNote(), followUp(part)]);
+	}
+});
+
+test("removes the tool result marker of a type it does not carry or a missing attachment, and keeps the note", async () => {
+	const payload = await chatPayload(readTurn(readPdf()));
+	for (const attachment of [findIn({ e1: [attachments[11]] }), findIn({})]) {
+		assert.deepEqual(afterCall(payload, attachment), [toolNote()]);
+	}
+});
+
+test("leaves tool result text that only contains a marker", async () => {
+	const payload = await chatPayload(readTurn(readResult("call_1", [text("file says [[pi-media:abc:0]] literal")])));
+	assert.equal(rewrite(payload, findIn({ abc: [pdf] })), undefined);
+});
+
+test("takes only the marker lines at the end of a tool result", async () => {
+	const payload = await chatPayload(
+		readTurn(readResult("call_1", [text("first\n[[pi-media:abc:0]]\nlast"), text("[[pi-media:e1:0]]")])),
+	);
+	assert.deepEqual(afterCall(payload, findIn({ abc: [pdf], e1: [pdf] })), [
+		{ role: "tool", content: "first\n[[pi-media:abc:0]]\nlast", tool_call_id: "call_1" },
+		followUp(reportPart),
+	]);
+});
+
+test("puts the files after the last of consecutive tool results", async () => {
+	const payload = await chatPayload(readTurn(readPdf("call_1"), readResult("call_2", [text("line one")])));
+	assert.deepEqual(afterCall(payload), [
+		toolNote("call_1"),
+		{ role: "tool", content: "line one", tool_call_id: "call_2" },
+		followUp(reportPart),
+	]);
+});
+
+test("adds the files to the user message that pi-ai adds for tool result images", async () => {
+	const payload = await chatPayload(readTurn(imageResult("call_1"), readPdf("call_2")));
+	assert.deepEqual(afterCall(payload), [
+		{ role: "tool", content: "Read image file [image/png]", tool_call_id: "call_1" },
+		toolNote("call_2"),
+		imageFollowUp(reportPart),
+	]);
+});
+
+const bridged = { provider: "openai", id: "gpt-4o", compat: { requiresAssistantAfterToolResult: true } };
+
+test("puts the files after the assistant message that pi-ai adds after tool results for some providers", async () => {
+	const next: Message = { role: "user", content: "and now?", timestamp: 3 };
+	const payload = await chatPayload([...readTurn(readPdf()), next], bridged);
+	assert.deepEqual(afterCall(payload), [toolNote(), bridge, followUp(reportPart), { role: "user", content: "and now?" }]);
+
+	const withImage = await chatPayload(
+		readTurn(readPdf(), readResult("call_2", [{ type: "image", data: "xx", mimeType: "image/png" }])),
+		bridged,
+	);
+	assert.deepEqual(afterCall(withImage), [
+		toolNote(),
+		{ role: "tool", content: "(see attached image)", tool_call_id: "call_2" },
+		bridge,
+		imageFollowUp(reportPart),
+	]);
+});
+
+test("adds the assistant message that pi-ai adds after tool results for some providers when the tool results are last", async () => {
+	const payload = await chatPayload(readTurn(readPdf()), bridged);
+	assert.equal(payload.messages[1].content, "");
+	assert.deepEqual(afterCall(payload), [toolNote(), bridge, followUp(reportPart)]);
+});
+
+test("rewrites a user message marker and a tool result marker in the same payload", async () => {
+	const prompt: Message = { role: "user", content: [text("see @a.mp3"), text("[[pi-media:u1:0]]")], timestamp: 0 };
+	const payload = await chatPayload([prompt, ...readTurn(readPdf()).slice(1)]);
+	const result = messagesOf(assertPureRewrite(payload, findIn({ e1: [pdf], u1: [attachments[2]] })));
+	assert.deepEqual(result[0], { role: "user", content: [text("see @a.mp3"), mp3Part] });
+	assert.deepEqual(result.slice(2), [toolNote(), followUp(reportPart)]);
+});
+
+test("keeps the cache marker on the tool result text when the tool result is the last message", async () => {
+	const payload = await chatPayload(readTurn(readPdf()), openRouterClaude);
+	assert.deepEqual(payload.messages.at(-1)?.content, [
+		{ type: "text", text: `${pdfNote}\n[[pi-media:e1:0]]`, cache_control: { type: "ephemeral" } },
+	]);
+	assert.deepEqual(afterCall(payload), [
+		{ role: "tool", content: [{ type: "text", text: pdfNote, cache_control: { type: "ephemeral" } }], tool_call_id: "call_1" },
+		followUp(reportPart),
+	]);
 });
