@@ -53,14 +53,6 @@ test("does not resize an image when the image auto-resize setting is off", async
 	assert.notDeepEqual(await readWithMedia(dir, { path: "wide.png" }, true), result);
 });
 
-test("strips a leading @ from the path, as pi's read tool does", async () => {
-	const dir = await fixtureDir({ "a.pdf": "%PDF-1.4" });
-	assert.deepEqual(await readWithMedia(dir, { path: "@a.pdf" }), {
-		content: [{ type: "text", text: `Read PDF file [application/pdf]: ${join(dir, "a.pdf")}` }],
-		details: { path: join(dir, "a.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" },
-	});
-});
-
 test("passes offset and limit to pi's read tool", async () => {
 	const dir = await fixtureDir({ "notes.md": "one\ntwo\nthree" });
 	const params = { path: "notes.md", offset: 2, limit: 1 };

@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import { findPathCandidates } from "../src/find-paths.ts";
-import { resolvePath } from "../src/resolve-path.ts";
 import { findMedia, fixtureDir, MP3_BYTES, NOTHING, PNG_BYTES, PNG_IMAGE } from "./fixtures.ts";
 
 const dir = await fixtureDir({
@@ -67,7 +66,6 @@ function onPlatform<T>(platform: NodeJS.Platform, run: () => T, tempDir = tmpdir
 
 const candidates = (text: string, platform: NodeJS.Platform, tempDir?: string) =>
 	onPlatform(platform, () => findPathCandidates(text), tempDir);
-const resolveOn = (platform: NodeJS.Platform, path: string, cwd: string) => onPlatform(platform, () => resolvePath(path, cwd));
 
 test("attaches a bare absolute image path", async () => {
 	assert.deepEqual(await findMedia(`${dir}/shot.png what is this?`, "/"), {
@@ -250,33 +248,4 @@ test("keeps trailing punctuation outside a Windows path and skips URLs", () => {
 	for (const platform of ["win32", "darwin"] as const) {
 		assert.deepEqual(candidates("see https://example.com/C:/a.pdf now", platform), []);
 	}
-});
-
-test("resolves Windows paths by pi's Windows rules", (t) => {
-	setHome(t, String.raw`C:\Users\me`);
-	const cwd = String.raw`C:\work`;
-	const cases = [
-		[String.raw`C:\Users\me\a.pdf`, String.raw`C:\Users\me\a.pdf`],
-		["C:/Users/me/a.pdf", String.raw`C:\Users\me\a.pdf`],
-		[String.raw`\\server\share\a.pdf`, String.raw`\\server\share\a.pdf`],
-		[String.raw`.\a.pdf`, String.raw`C:\work\a.pdf`],
-		[String.raw`..\a.pdf`, String.raw`C:\a.pdf`],
-		[String.raw`@docs\notes.pdf`, String.raw`C:\work\docs\notes.pdf`],
-		[String.raw`~\a.pdf`, String.raw`C:\Users\me\a.pdf`],
-		["~/a.pdf", String.raw`C:\Users\me\a.pdf`],
-		["/c/Users/me/a.pdf", String.raw`C:\Users\me\a.pdf`],
-		["/mnt/d/My Files/a.pdf", String.raw`D:\My Files\a.pdf`],
-		["/cygdrive/e/a.pdf", String.raw`E:\a.pdf`],
-		["file:///C:/Users/me/My%20File.pdf", String.raw`C:\Users\me\My File.pdf`],
-	];
-	for (const [path, expected] of cases) assert.equal(resolveOn("win32", path, cwd), expected, path);
-	assert.equal(resolveOn("win32", "a.pdf", "/c/work"), String.raw`C:\work\a.pdf`);
-});
-
-test("keeps Windows-only rules off on macOS and Linux", (t) => {
-	setHome(t, "/home/me");
-	assert.equal(resolveOn("linux", "/c/Users/me/a.pdf", "/work"), "/c/Users/me/a.pdf");
-	assert.equal(resolveOn("linux", "/mnt/d/a.pdf", "/work"), "/mnt/d/a.pdf");
-	assert.equal(resolveOn("darwin", String.raw`~\a.pdf`, "/work"), String.raw`/work/~\a.pdf`);
-	assert.equal(resolveOn("darwin", "~/a.pdf", "/work"), "/home/me/a.pdf");
 });

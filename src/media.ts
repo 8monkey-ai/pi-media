@@ -3,7 +3,7 @@ import { detectSupportedImageMimeTypeFromFile, type InputEvent } from "@earendil
 import { fileTypeFromFile } from "file-type";
 import { findPathCandidates } from "./find-paths.ts";
 import type { Attachment } from "./media-entry.ts";
-import { resolveExistingPath } from "./resolve-path.ts";
+import { resolveLikePiRead } from "./resolve-path.ts";
 
 type ImageContent = NonNullable<InputEvent["images"]>[number];
 
@@ -30,7 +30,7 @@ async function detectType(path: string) {
 
 // The type detectors read only the start of the file, so a large file costs no more than a small one.
 export async function findMediaFile(mention: string, cwd: string) {
-	const path = await resolveExistingPath(mention, cwd);
+	const path = await resolveLikePiRead(mention, cwd);
 	if (!path) return undefined;
 	const size = await regularFileSize(path);
 	if (size === 0) return undefined;
