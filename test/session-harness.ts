@@ -1,7 +1,7 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { type FauxResponseFactory, fauxAssistantMessage, fauxProvider, type Message } from "@earendil-works/pi-ai";
 import {
 	createAgentSession,
 	DefaultResourceLoader,
@@ -11,18 +11,46 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
+type Request = { messages: Message[]; payload: unknown };
+
+// The faux provider sends no payload of its own. This one has the Chat Completions shape of user messages,
+// so that `before_provider_request` handlers run on every model call.
+function userPayload(messages: Message[]) {
+	return { messages: messages.filter((message) => message.role === "user").map(({ role, content }) => ({ role, content })) };
+}
+
 type SessionOptions = {
 	files?: Record<string, string | Buffer>;
+	sessionManager?: (dir: string) => SessionManager;
+	api?: string;
 };
 
-// Drives a real pi session with an in-memory session manager and pi-ai's faux provider. The model answers "ok".
-// `files` go into the working directory, which is also the agent directory.
-export async function startSession(extensions: ExtensionFactory[], { files = {} }: SessionOptions = {}) {
+// Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
+// A model call waits until `settle` runs, so a test can queue input while pi streams.
+// `files` go into the working directory, which is also the agent directory. `sessionManager` defaults to an in-memory one.
+// `api` is the API of the model. It defaults to Chat Completions, the shape of the default payload.
+// The model answers "ok".
+export async function startSession(
+	extensions: ExtensionFactory[],
+	{ files = {}, sessionManager, api = "openai-completions" }: SessionOptions = {},
+) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-media-session-"));
 	for (const [name, content] of Object.entries(files)) await writeFile(join(dir, name), content);
+	await mkdir(join(dir, "skills", "greet"), { recursive: true });
+	await writeFile(join(dir, "skills", "greet", "SKILL.md"), "---\nname: greet\ndescription: Greets.\n---\nSay hello.\n");
+	await mkdir(join(dir, "prompts"));
+	await writeFile(join(dir, "prompts", "review.md"), "---\ndescription: Review.\n---\nReview $@ carefully.\n");
 
-	const faux = fauxProvider();
-	faux.setResponses(Array.from({ length: 50 }, () => fauxAssistantMessage("ok")));
+	const gates: Array<() => void> = [];
+	const requests: Request[] = [];
+	const faux = fauxProvider({ api });
+	const respond: FauxResponseFactory = async (context, options, _state, model) => {
+		const payload = userPayload(context.messages);
+		requests.push({ messages: context.messages, payload: (await options?.onPayload?.(payload, model)) ?? payload });
+		await new Promise<void>((resolve) => gates.push(resolve));
+		return fauxAssistantMessage("ok");
+	};
+	faux.setResponses(Array.from({ length: 50 }, () => respond));
 
 	const modelRuntime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
 	modelRuntime.registerNativeProvider(faux.provider);
@@ -33,6 +61,8 @@ export async function startSession(extensions: ExtensionFactory[], { files = {} 
 		settingsManager,
 		extensionFactories: extensions,
 		noContextFiles: true,
+		additionalSkillPaths: [join(dir, "skills")],
+		additionalPromptTemplatePaths: [join(dir, "prompts")],
 	});
 	await resourceLoader.reload();
 	const { session } = await createAgentSession({
@@ -42,15 +72,26 @@ export async function startSession(extensions: ExtensionFactory[], { files = {} 
 		modelRuntime,
 		resourceLoader,
 		settingsManager,
-		sessionManager: SessionManager.inMemory(dir),
+		sessionManager: sessionManager?.(dir) ?? SessionManager.inMemory(dir),
 		tools: [],
 	});
 
-	// Waits until `run` resolves and the session is idle.
-	async function settle(run: Promise<unknown>) {
-		await run;
-		await session.waitForIdle();
+	async function waitForCall() {
+		while (gates.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
 	}
 
-	return { session, settle };
+	// Lets every waiting and later model call finish until `run` resolves and the session is idle.
+	async function settle(run: Promise<unknown>) {
+		const timer = setInterval(() => {
+			for (const gate of gates.splice(0)) gate();
+		}, 1);
+		try {
+			await run;
+			await session.waitForIdle();
+		} finally {
+			clearInterval(timer);
+		}
+	}
+
+	return { session, dir, requests, waitForCall, settle };
 }

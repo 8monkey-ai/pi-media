@@ -1,107 +1,66 @@
 import { readFile, stat } from "node:fs/promises";
 import { detectSupportedImageMimeTypeFromFile, type InputEvent } from "@earendil-works/pi-coding-agent";
+import { fileTypeFromFile } from "file-type";
 import { findPathCandidates } from "./find-paths.ts";
+import type { Attachment } from "./media-entry.ts";
+import { isMediaType } from "./media-type.ts";
 import { resolveExistingPath } from "./resolve-path.ts";
 
 type ImageContent = NonNullable<InputEvent["images"]>[number];
 
-const MARKER_RE = /\[\[pi-media:([^|\]]+)\|([^|\]]+)\]\]/g;
-
-// Audio, video and document types Gemini models accept. Everything else stays plain text for pi's read tool.
-// https://ai.google.dev/gemini-api/docs/generate-content/{audio,video,document}-understanding
-const MIME_BY_EXTENSION: Record<string, string> = {
-	wav: "audio/wav",
-	mp3: "audio/mpeg",
-	aac: "audio/aac",
-	flac: "audio/flac",
-	ogg: "audio/ogg",
-	aiff: "audio/aiff",
-	aif: "audio/aiff",
-	mp4: "video/mp4",
-	mov: "video/quicktime",
-	webm: "video/webm",
-	mpeg: "video/mpeg",
-	mpg: "video/mpeg",
-	avi: "video/avi",
-	wmv: "video/wmv",
-	flv: "video/x-flv",
-	"3gp": "video/3gpp",
-	pdf: "application/pdf",
-};
-
-// ponytail: files above this are left as plain paths — base64 in memory would risk an OOM.
-// Raise it, or upload and send a URL instead, if large video matters.
+// Files above the cap stay as text: pi-media holds each attachment in memory as base64.
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
-export function makeMarker(path: string, mediaType: string) {
-	return `[[pi-media:${path}|${mediaType}]]`;
-}
-
-function mediaTypeFromExtension(path: string) {
-	return MIME_BY_EXTENSION[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];
-}
-
-async function isAttachable(path: string) {
+async function fileSize(path: string) {
 	try {
 		const stats = await stat(path);
-		return stats.isFile() && stats.size > 0 && stats.size <= MAX_ATTACHMENT_BYTES;
+		return stats.isFile() ? stats.size : 0;
 	} catch {
-		return false;
+		return 0;
 	}
 }
 
 // Images go to pi's own image handling, so pi's detector decides what an image is.
-async function readImage(path: string): Promise<ImageContent | undefined> {
-	const mimeType = await detectSupportedImageMimeTypeFromFile(path);
-	if (!mimeType) return undefined;
-	return { type: "image", data: (await readFile(path)).toString("base64"), mimeType };
+async function detectType(path: string) {
+	const imageType = await detectSupportedImageMimeTypeFromFile(path);
+	if (imageType) return { image: true, mimeType: imageType };
+	const mimeType = (await fileTypeFromFile(path))?.mime;
+	return mimeType && isMediaType(mimeType) ? { image: false, mimeType } : undefined;
 }
 
-// Returns the image, or the marker that replaces the path in the text.
-async function attach(mention: string, cwd: string) {
+// The type detectors read only the start of the file, so a large file costs no more than a small one.
+async function findMediaFile(mention: string, cwd: string) {
 	const path = await resolveExistingPath(mention, cwd);
-	if (!path || !(await isAttachable(path))) return undefined;
-	const image = await readImage(path).catch(() => undefined);
-	if (image) return image;
-	const mediaType = mediaTypeFromExtension(path);
-	return mediaType ? makeMarker(path, mediaType) : undefined;
+	if (!path) return undefined;
+	const size = await fileSize(path);
+	if (size === 0) return undefined;
+	const type = await detectType(path).catch(() => undefined);
+	return type && { path, size, ...type };
 }
 
-// Returns the text with a marker in place of each audio, video or PDF path, and the images.
-// The text keeps the image paths as typed.
-export async function attachLocalMedia(text: string, cwd: string) {
-	let result = "";
-	let last = 0;
+async function readAttachment(path: string, mimeType: string) {
+	return { path, mimeType, data: (await readFile(path)).toString("base64") };
+}
+
+export async function findLocalMedia(text: string, cwd: string) {
 	let attachedEnd = 0;
+	const attachedPaths = new Set<string>();
 	const images: ImageContent[] = [];
+	const attachments: Attachment[] = [];
 	for (const { start, end, path } of findPathCandidates(text)) {
 		if (start < attachedEnd) continue;
-		const attachment = await attach(path, cwd);
-		if (!attachment) continue;
-		attachedEnd = end;
-		if (typeof attachment !== "string") {
-			images.push(attachment);
+		const file = await findMediaFile(path, cwd);
+		if (!file || file.size > MAX_ATTACHMENT_BYTES) continue;
+		if (attachedPaths.has(file.path)) {
+			attachedEnd = end;
 			continue;
 		}
-		result += text.slice(last, start) + attachment;
-		last = end;
+		const attachment = await readAttachment(file.path, file.mimeType).catch(() => undefined);
+		if (!attachment) continue;
+		attachedEnd = end;
+		attachedPaths.add(file.path);
+		if (file.image) images.push({ type: "image", data: attachment.data, mimeType: attachment.mimeType });
+		else attachments.push(attachment);
 	}
-	if (last === 0 && images.length === 0) return undefined;
-	return { text: result + text.slice(last), images };
-}
-
-type MediaSegment = { type: "text"; text: string } | { type: "media"; path: string; mediaType: string };
-
-export function splitMarkers(text: string): MediaSegment[] {
-	const segments: MediaSegment[] = [];
-	let last = 0;
-	for (const match of text.matchAll(MARKER_RE)) {
-		const before = text.slice(last, match.index).trim();
-		if (before) segments.push({ type: "text", text: before });
-		segments.push({ type: "media", path: match[1], mediaType: match[2] });
-		last = match.index + match[0].length;
-	}
-	const after = text.slice(last).trim();
-	if (after) segments.push({ type: "text", text: after });
-	return segments;
+	return { images, attachments };
 }

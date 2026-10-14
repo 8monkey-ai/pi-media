@@ -23,12 +23,18 @@
   "publishConfig": {
     "access": "public"
   },
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
     "test": "node --test \"test/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "format": "biome format --write .",
     "lint": "biome lint .",
     "check": "biome check . && npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "file-type": "^22.1.1"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
@@ -38,6 +44,7 @@
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^22",
+    "openai": "^7.19.0",
     "typescript": "^5"
   },
   "keywords": [

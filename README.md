@@ -16,7 +16,7 @@ what is wrong with this recording? ~/Downloads/debug-session.mp3
 compare @"Q3 report.pdf" with ./q4-report.pdf
 ```
 
-Type a path, drag a file into the terminal, or paste.
+Type a path, drag a file into the terminal, or paste. If pi-media can send the file type to the model (see [Providers](#providers)), the model gets the file. If not, the model gets only your message with the path in it.
 
 To paste, press Ctrl+V (Alt+V on Windows and WSL):
 
@@ -72,46 +72,58 @@ pi-media attaches a file when all of these conditions are true:
 - The file is not larger than 20 MiB.
 - The file has one of these types:
 
-| Kind | Types | How pi-media finds the type |
-|---|---|---|
-| Image | PNG, JPEG, GIF, WebP, BMP | From the content of the file, with pi's own image check |
-| Audio | `wav` `mp3` `aac` `flac` `ogg` `aiff` `aif` | From the file name extension |
-| Video | `mp4` `mov` `webm` `mpeg` `mpg` `avi` `wmv` `flv` `3gp` | From the file name extension |
-| Document | `pdf` | From the file name extension |
+| Kind | Types |
+|---|---|
+| Image | PNG, JPEG, GIF, WebP, BMP |
+| Audio | All `audio/*` types |
+| Video | All `video/*` types |
+| Document | PDF |
 
 If a condition is false, the path stays as text and no file attaches.
 
-### Images
-
+- pi-media finds the type of a file from its content, not from its file name extension. For images, it uses pi's own image check. For other files, it uses the [`file-type`](https://github.com/sindresorhus/file-type) package.
 - Animated PNG, HEIC and HEIF files stay as text.
-- Your message text stays as you typed it, with the path in it.
+- Your message text stays as you typed it, with the paths in it.
 - pi-media gives images to pi. Pi handles them as it handles other images in a message. For example, the settings `images.autoResize` and `images.blockImages` apply, and a model without image input gets a text note instead of the image.
-
-### Audio, video and PDF files
-
-pi-media replaces the path in your message, with its `@`, quotes or backslashes, with a marker of the form `[[pi-media:<path>|<type>]]`. Before each request, pi-media reads the file and puts it in place of the marker (see [Providers](#providers)).
-
-- Each later turn sends the file again, so you can ask about it later in the conversation.
-- If you change the file, the next request sends the new content.
-- If you delete the file, the marker stays as text.
+- pi-media reads an audio, video or PDF file when you send the message. It stores the bytes in the session as base64 text, which is about 1.33 times the file size.
+- Later turns and resumed sessions use the stored bytes. If you change or delete the file, the model still gets the file as it was when pi-media read it.
+- A file that you name two times in one message attaches one time.
 
 ## Providers
 
-pi-media changes the `messages` list of each request, for all APIs. In each message, it puts this content part in place of a marker:
+Only models with the OpenAI Chat Completions API (`openai-completions`) get audio, video and PDF files. This applies to all providers that use this API, for example OpenRouter. Images go through pi, as [What gets attached](#what-gets-attached) states.
 
-```json
-{ "type": "file", "file": { "data": "<base64>", "media_type": "<type>" } }
-```
+pi-media sends these types in the part forms that OpenRouter documents:
 
-Gateways that accept this part get the file. A provider that rejects the part returns an error, and pi shows it. If the request has no `messages` list, or its messages hold text in a different form, for example in the Gemini API, the marker stays as text.
+| Kind | Types | Part |
+|---|---|---|
+| Document | PDF | `file`, with the file name in `filename` and a `data:` URL in `file_data` |
+| Audio | WAV, MP3, AIFF, AAC, Ogg, FLAC, M4A | `input_audio`, with the base64 data and the format `wav`, `mp3`, `aiff`, `aac`, `ogg`, `flac` or `m4a` |
+| Video | MP4, MPEG, WebM | `video_url`, with a `data:` URL |
+
+Not all providers accept all of these parts:
+
+- OpenAI's own API accepts only PDF, and audio in WAV and MP3. It has no `video_url` part.
+- Hebo Gateway does not accept `video_url` parts or the audio formats `aac` and `aiff`.
+
+A provider that rejects a part, or a request that is too large, returns an error, and pi shows it. pi-media stores the file in the session, so each later turn on that branch sends the file again and fails in the same way. To continue, switch to a different model, or use `/tree` to go back to a point before the message with the file.
+
+All other APIs get no files. Virtual models (`pi-virtual`) also get no files, because pi-media sees only the API `pi-virtual` and not the API of the model that answers.
+
+When pi-media does not send a file, because the API gets no files or the type is not in the table (for example Opus audio or MOV video), the path stays as text in your message.
 
 ## Limits
 
 - A path without quotes or backslashes ends at the first space if its line has other text. In `see /Users/me/My File.png`, pi-media looks for `/Users/me/My`, and no file attaches.
 - On Windows, a path without quotes that has `\'` for an apostrophe does not attach, for example `don\'t.png`. The mintty terminal of Git Bash can write a path in this form.
-- Errors from the provider, for example for a file type that it does not accept or a request that is too large, show in pi unchanged.
+- Audio, video and PDF files do not attach to a message that pi expands from a skill (`/skill:name`) or a prompt template (`/name`). Images attach.
+- pi-media stores the files of a message in a session entry of its own, and finds that entry by the message text. Each message gets the files of one entry at most. If a message does not reach the session, for example when you clear the message queue or edit a message in the session tree, its entry stays unused. A later message with the same text that attaches no files of its own then gets the files of that entry. If you queue two messages with the same text and the file changes between them, each message can get the file as it was for the other message.
+- pi-media marks the place of a file in a request with text of the form `[[pi-media:<id>:<number>]]`. If your message ends with lines that hold only text of this form, pi-media can remove these lines from the request.
 
-pi-media has no runtime dependencies. It runs under Node and Bun.
+## Requirements
+
+- pi
+- Node 22.19 or later
 
 ## Development
 
