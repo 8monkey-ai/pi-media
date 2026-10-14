@@ -198,15 +198,6 @@ test("groups a quoted Windows path with spaces", () => {
 	assert.deepEqual(candidates(powershell, "darwin"), []);
 });
 
-test("reads '' and '\\'' as one apostrophe in single quotes on Windows", () => {
-	assert.deepEqual(candidates(String.raw`& 'C:\Users\me\it''s.pdf'`, "win32"), [
-		{ start: 2, end: 25, path: String.raw`C:\Users\me\it's.pdf` },
-	]);
-	assert.deepEqual(candidates(String.raw`see 'C:\Users\me\it'\''s.pdf' now`, "win32"), [
-		{ start: 4, end: 29, path: String.raw`C:\Users\me\it's.pdf` },
-	]);
-});
-
 test("finds a pasted image path in the temporary directory, also inside a word", () => {
 	const uuid = "0b9f7c1e-5d2a-4c3b-9e8f-1a2b3c4d5e6f";
 	assert.deepEqual(

@@ -77,28 +77,20 @@ function toolRuns(messages: unknown[]) {
 	return runs;
 }
 
-// With `compat.requiresAssistantAfterToolResult`, pi-ai adds `bridge` between tool messages and a user message after
-// them.
-const bridge = { role: "assistant", content: "I have processed the tool results." };
-
-// Tool messages take text only. pi-ai puts tool result images in one user message after the tool messages, after
-// `bridge` for providers that need it. The files go to the same place.
-function placeAfterRun(messages: unknown[], end: number, parts: unknown[], needsBridge: boolean) {
-	const after = messages[end];
-	const bridged = isRole(after, "assistant") && after.content === bridge.content;
-	const at = bridged ? end + 1 : end;
-	const next = messages[at];
+// Tool messages take text only. pi-ai puts tool result images in one user message after the tool messages. The files go
+// to the same place.
+function placeAfterRun(messages: unknown[], end: number, parts: unknown[]) {
+	const next = messages[end];
 	if (isRole(next, "user") && Array.isArray(next.content) && textOf(next.content[0]) === "Attached image(s) from tool result:") {
-		messages[at] = { ...next, content: [...next.content, ...parts] };
+		messages[end] = { ...next, content: [...next.content, ...parts] };
 		return;
 	}
-	const files = { role: "user", content: [textPart("Attached file(s) from tool result:"), ...parts] };
-	messages.splice(at, 0, ...(needsBridge && !bridged ? [{ ...bridge }, files] : [files]));
+	messages.splice(end, 0, { role: "user", content: [textPart("Attached file(s) from tool result:"), ...parts] });
 }
 
 // Replaces the markers in user messages and tool messages of a Chat Completions payload with file parts.
 // Markers in other messages stay. Returns undefined when the payload has no marker to replace.
-export function rewrite(payload: unknown, attachment: FindAttachment, requiresAssistantAfterToolResult: boolean) {
+export function rewrite(payload: unknown, attachment: FindAttachment) {
 	if (!isRecord(payload) || !Array.isArray(payload.messages)) return undefined;
 	const messages: unknown[] = payload.messages;
 	const users = messages.map((message) => rewriteUserMessage(message, attachment));
@@ -107,7 +99,7 @@ export function rewrite(payload: unknown, attachment: FindAttachment, requiresAs
 	const result = messages.map((message, index) => users[index] ?? tools[index]?.message ?? message);
 	for (const { start, end } of toolRuns(messages).reverse()) {
 		const parts = tools.slice(start, end).flatMap((tool) => tool?.parts ?? []);
-		if (parts.length > 0) placeAfterRun(result, end, parts, requiresAssistantAfterToolResult);
+		if (parts.length > 0) placeAfterRun(result, end, parts);
 	}
 	return { ...payload, messages: result };
 }

@@ -16,7 +16,7 @@ what is wrong with this recording? ~/Downloads/debug-session.mp3
 compare @"Q3 report.pdf" with ./q4-report.pdf
 ```
 
-Type a path, drag a file into the terminal, or paste. If pi-media can send the file type to the model (see [Providers](#providers)), the model gets the file. If not, the model gets only your message with the path in it.
+Type a path, drag a file into the terminal, or paste. Your message text stays as you typed it, with the paths in it. If pi-media can send the file to the model (see [What gets attached](#what-gets-attached) and [Providers](#providers)), the model also gets the file. If not, the path stays as text.
 
 To paste, press Ctrl+V (Alt+V on Windows and WSL):
 
@@ -34,6 +34,8 @@ pi-media finds these paths in your message:
 
 A path starts at the start of the message, after a space, a tab or a line break, or after `(`, `[` or `{`. A `/` in a word or in a URL, for example `https://example.com/a.png`, does not start a path. A relative path such as `docs/notes.pdf` must start with `./` or `@`.
 
+At the end of a path without quotes, pi-media ignores the characters `)`, `]`, `,`, `.`, `;`, `:`, `!` and `?`. For example, in `(see ./a.pdf).` pi-media finds `./a.pdf`. This rule does not apply to a path with spaces that is alone on its line.
+
 A message can have many paths. pi-media attaches all of them.
 
 ### Paths with spaces
@@ -45,23 +47,13 @@ Write a path with spaces in one of these forms:
 - On macOS and Linux, with a backslash before each space: `/Users/me/My\ File.png`.
 - Alone on a line: `/Users/me/My File.png`. When you paste copied files with Ctrl+V on macOS, pi writes each path on a line of its own.
 
-On Windows, a backslash is a part of the path, also in double quotes. Use quotes or a line of its own for a path with spaces: `"C:\Users\me\My File.png"`. In single quotes, pi-media reads `''` and `'\''` as one apostrophe, because PowerShell and Git Bash write an apostrophe in these forms: `'C:\Users\me\it''s.png'`.
+On Windows, a backslash is a part of the path, also in double quotes. Use quotes or a line of its own for a path with spaces: `"C:\Users\me\My File.png"`.
 
 Terminals usually write a dragged file in one of these forms. Windows Terminal and the Windows console put double quotes around a path with spaces. The VS Code terminal with PowerShell writes `& 'C:\Users\me\My File.png'`, and pi-media finds the quoted path in it.
 
 ### How a path finds the file
 
-pi-media uses the same rules as pi's `read` tool:
-
-- A relative path starts from the working directory of the session.
-- `~` is your home directory.
-- On Windows, Git Bash, MSYS2 and Cygwin drive paths (`/c/Users/me`, `/cygdrive/c/Users/me`) and WSL drive paths (`/mnt/c/Users/me`) find `C:\Users\me`.
-- On macOS, a screenshot name such as `Screenshot 2024-01-01 at 10.00.00 AM.png` has a narrow no-break space before `AM` or `PM`. A normal space in the path also finds the file.
-- A file name in decomposed Unicode form (NFD) matches when you type it in composed form.
-- A file name with a curly apostrophe (`’`) matches when you type a straight apostrophe (`'`).
-- pi-media reads other Unicode space characters in a path as normal spaces.
-
-At the end of a path without quotes, pi-media ignores the characters `)`, `]`, `,`, `.`, `;`, `:`, `!` and `?`. For example, in `(see ./a.pdf).` pi-media finds `./a.pdf`. This rule does not apply to a path with spaces that is alone on its line.
+pi-media finds a file with the same rules as pi's `read` tool. A relative path starts from the working directory of the session, and `~` is your home directory.
 
 ## What gets attached
 
@@ -79,11 +71,7 @@ pi-media attaches a file when all of these conditions are true:
 | Video | All `video/*` types |
 | Document | PDF |
 
-If a condition is false, the path stays as text and no file attaches.
-
-- pi-media finds the type of a file from its content, not from its file name extension. For images, it uses pi's own image check. For other files, it uses the [`file-type`](https://github.com/sindresorhus/file-type) package.
-- Animated PNG, HEIC and HEIF files stay as text.
-- Your message text stays as you typed it, with the paths in it.
+- pi-media finds the type of a file from its content, not from its file name extension. For images, it uses pi's own image check. For other files, it uses the [`file-type`](https://github.com/sindresorhus/file-type) package. Animated PNG, HEIC and HEIF files do not attach.
 - pi-media gives images to pi. Pi handles them as it handles other images in a message. For example, the settings `images.autoResize` and `images.blockImages` apply, and a model without image input gets a text note instead of the image.
 - pi-media reads an audio, video or PDF file when you send the message. It stores the bytes in the session as base64 text, which is about 1.33 times the file size. It stores the files that the `read` tool reads in the same way.
 - Later turns and resumed sessions use the stored bytes. If you change or delete the file, the model still gets the file as it was when pi-media read it.
@@ -101,6 +89,8 @@ pi-media sends these types in the part forms that OpenRouter documents, in your 
 | Audio | WAV, MP3, AIFF, AAC, Ogg, FLAC, M4A | `input_audio`, with the base64 data and the format `wav`, `mp3`, `aiff`, `aac`, `ogg`, `flac` or `m4a` |
 | Video | MP4, MPEG, WebM | `video_url`, with a `data:` URL |
 
+pi-media does not send other types, for example Opus audio or MOV video.
+
 Not all providers accept all of these parts:
 
 - OpenAI's own API accepts only PDF, and audio in WAV and MP3. It has no `video_url` part.
@@ -109,8 +99,6 @@ Not all providers accept all of these parts:
 A provider that rejects a part, or a request that is too large, returns an error, and pi shows it. pi-media stores the file in the session, so each later turn on that branch sends the file again and fails in the same way. To continue, switch to a different model, or use `/tree` to go back to a point before the message or the read tool result with the file.
 
 All other APIs get no files. Virtual models (`pi-virtual`) also get no files, because pi-media sees only the API `pi-virtual` and not the API of the model that answers.
-
-When pi-media does not send a file, because the API gets no files or the type is not in the table (for example Opus audio or MOV video), the path stays as text in your message. In a read tool result, the model gets the note in [The read tool](#the-read-tool).
 
 ## The read tool
 
@@ -128,13 +116,11 @@ If the file is larger than `maxAttachmentBytes`, the model gets this note and no
 PDF file [application/pdf] is larger than the pi-media limit maxAttachmentBytes (20971520 bytes): /Users/me/report.pdf
 ```
 
-If pi-media cannot send the file type to the model (see [Providers](#providers)), the model gets this note after the tool result, and no file:
+If pi-media cannot send the file to the model (see [Providers](#providers) and [Limits](#limits)), the model gets this note after the tool result, and no file:
 
 ```
 [The API of the current model cannot take this file type. The file content is not in this request.]
 ```
-
-Chat Completions tool messages take only text, so the file goes in a user message after the tool messages. If pi has added a user message for tool result images there, pi-media adds the file to it. If not, pi-media adds a user message that starts with the text `Attached file(s) from tool result:`. For a model with `compat.requiresAssistantAfterToolResult`, an assistant message with the text `I have processed the tool results.` comes before that user message.
 
 If another extension also registers a `read` tool, pi uses the `read` tool of the extension that loads first.
 
@@ -144,7 +130,7 @@ pi-media reads its settings from the file `pi-media.json` in the pi agent direct
 
 | Setting | Default | Effect |
 |---|---|---|
-| `maxAttachmentBytes` | `20971520` (20 MiB) | The size in bytes of the largest file that pi-media attaches, from your message or from the `read` tool. A larger file in your message stays as path text. pi-media holds each attached file in memory as base64 text, so a larger value can use more memory. |
+| `maxAttachmentBytes` | `20971520` (20 MiB) | The size in bytes of the largest file that pi-media attaches, from your message or from the `read` tool. pi-media holds each attached file in memory as base64 text, so a larger value can use more memory. |
 
 Example, for a limit of 50 MiB:
 
@@ -156,19 +142,17 @@ Example, for a limit of 50 MiB:
 
 - pi-media reads the file when pi loads extensions. After you change the file, run `/reload` or start pi again.
 - pi-media ignores keys that it does not know.
-- pi-media does not load, and pi shows an error with the path of the file, in these cases:
-  - The file is not valid JSON.
-  - The JSON value is not an object, for example an array or a number.
-  - `maxAttachmentBytes` is not a positive integer.
-  - pi-media cannot read a file that exists.
+- If pi-media cannot read the file, the file is not a JSON object, or `maxAttachmentBytes` is not a positive integer, pi-media does not load, and pi shows an error with the path of the file.
 
 ## Limits
 
 - A path without quotes or backslashes ends at the first space if its line has other text. In `see /Users/me/My File.png`, pi-media looks for `/Users/me/My`, and no file attaches.
-- On Windows, a path without quotes that has `\'` for an apostrophe does not attach, for example `don\'t.png`. The mintty terminal of Git Bash can write a path in this form.
-- Audio, video and PDF files do not attach to a message that starts with a skill command (`/skill:name`) or a prompt template command (`/name`), and pi-media does not store them. Images attach.
-- pi-media stores the files of a message in a session entry of its own, and finds that entry by the message text. Each message gets the files of one entry at most. If a message does not reach the session, for example when you clear the message queue or edit a message in the session tree, its entry stays unused. A later message with the same text that attaches no files of its own then gets the files of that entry. If you queue two messages with the same text and the file changes between them, each message can get the file as it was for the other message.
-- pi-media marks the place of a file in a request with text of the form `[[pi-media:<id>:<number>]]`. If a tool result ends with lines that hold only text of this form, pi-media can remove these lines from the request.
+- On Windows, a path with an apostrophe in its file name does not attach in single quotes, for example `'C:\Users\me\it''s.png'`, or with `\'` for the apostrophe, for example `don\'t.png`. PowerShell and Git Bash can write paths in these forms. Use double quotes, or put the path on a line of its own.
+- Audio, video and PDF files do not attach to a message that starts with a skill command (`/skill:name`) or a prompt template command (`/name`). pi-media stores these files in the session, and no message uses them. Images attach.
+- A model with `compat.requiresAssistantAfterToolResult` set to `true` gets no files from the `read` tool. Files in your message attach.
+- If a message with files does not get to the model, for example when you clear the message queue or edit a message in the session tree, pi-media keeps its files. A later message with the same text and no files of its own gets these files.
+- If you queue two messages with the same text and the file changes between them, each message can get the file as it was for the other message.
+- If a tool result ends with lines that hold only text of the form `[[pi-media:<id>:<number>]]`, the model can get the tool result without these lines.
 
 ## Requirements
 

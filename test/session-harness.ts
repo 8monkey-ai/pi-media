@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -7,6 +7,7 @@ import {
 	fauxAssistantMessage,
 	fauxProvider,
 	type Message,
+	type OpenAICompletionsCompat,
 } from "@earendil-works/pi-ai";
 import {
 	createAgentSession,
@@ -30,6 +31,7 @@ type SessionOptions = {
 	files?: Record<string, string | Buffer>;
 	sessionManager?: (dir: string) => SessionManager;
 	api?: string;
+	compat?: OpenAICompletionsCompat;
 	tools?: string[];
 	reply?: (messages: Message[]) => AssistantMessage;
 	payload?: (messages: Message[]) => unknown;
@@ -51,6 +53,7 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 // A model call waits until `settle` runs, so a test can queue input while pi streams.
 // `files` go into the working directory, which is also the agent directory.
 // `api` is the API of the model. Its default, Chat Completions, is the shape of the default payload.
+// `compat` is the compat setting of the model.
 // `tools` names the active tools.
 // `reply` makes the answer of the model from the request messages, for example a tool call.
 // `payload` makes the provider payload from the request messages.
@@ -60,6 +63,7 @@ export async function startSession(
 		files = {},
 		sessionManager,
 		api = "openai-completions",
+		compat,
 		tools = [],
 		reply = () => fauxAssistantMessage("ok"),
 		payload: makePayload = userPayload,
@@ -67,10 +71,6 @@ export async function startSession(
 ) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-media-session-"));
 	for (const [name, content] of Object.entries(files)) await writeFile(join(dir, name), content);
-	await mkdir(join(dir, "skills", "greet"), { recursive: true });
-	await writeFile(join(dir, "skills", "greet", "SKILL.md"), "---\nname: greet\ndescription: Greets.\n---\nSay hello.\n");
-	await mkdir(join(dir, "prompts"));
-	await writeFile(join(dir, "prompts", "review.md"), "---\ndescription: Review.\n---\nReview $@ carefully.\n");
 
 	const gates: Array<() => void> = [];
 	const requests: ModelRequest[] = [];
@@ -92,14 +92,12 @@ export async function startSession(
 		settingsManager,
 		extensionFactories: extensions,
 		noContextFiles: true,
-		additionalSkillPaths: [join(dir, "skills")],
-		additionalPromptTemplatePaths: [join(dir, "prompts")],
 	});
 	await loadExtensions(resourceLoader, dir);
 	const { session } = await createAgentSession({
 		cwd: dir,
 		agentDir: dir,
-		model: faux.getModel(),
+		model: { ...faux.getModel(), compat },
 		modelRuntime,
 		resourceLoader,
 		settingsManager,

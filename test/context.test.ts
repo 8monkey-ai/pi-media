@@ -136,23 +136,3 @@ test("marks only read results whose details hold an attachment", () => {
 		assert.deepEqual(sent([result], session.getBranch(), carriesAll), [result], name);
 	}
 });
-
-test("links a message to the entry with its exact text before an entry whose text with image hints matches", () => {
-	const session = SessionManager.inMemory("/");
-	const attachments = [{ path: "/a.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" }];
-	const exactId = session.appendCustomEntry("pi-media", { text: "a\n\nb", attachments });
-	session.appendCustomEntry("pi-media", { text: "a", attachments });
-	session.appendMessage({ role: "user", content: "a\n\nb", timestamp: 1 });
-	assert.deepEqual(markContext([{ role: "user", content: "a\n\nb", timestamp: 1 }], session.getBranch(), carriesAll), {
-		messages: [
-			{
-				role: "user",
-				content: [
-					{ type: "text", text: "a\n\nb" },
-					{ type: "text", text: `[[pi-media:${exactId}:0]]` },
-				],
-				timestamp: 1,
-			},
-		],
-	});
-});

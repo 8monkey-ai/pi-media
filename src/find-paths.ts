@@ -26,19 +26,17 @@ const POSIX = syntax(
 	/'(?<literal>[^'\n]*)'|"(?<double>(?:[^"\\\n]|\\.)*)"|\\(?<escaped>.)|(?<plain>[^ \t\r\n'"\\]+)/y,
 	/\\(?<escaped>.)|(?<plain>[^ \t\r\n\\]+)/y,
 );
-// In single quotes, PowerShell writes an apostrophe as '' and Git Bash as '\''.
-// A Windows file name cannot contain a backslash, so '\'' has no other meaning.
 const WINDOWS = syntax(
 	String.raw`${POSIX_PATH_START}|[A-Za-z]:[\\/]|\\\\|\.\.?\\|~\\`,
-	/"(?<literal>[^"\n]*)"|'(?<windowsSingle>(?:'\\''|''|[^'\n])*)'|(?<plain>[^ \t\r\n'"]+)/y,
+	/(?<quote>["'])(?<literal>(?:(?!\k<quote>)[^\n])*)\k<quote>|(?<plain>[^ \t\r\n'"]+)/y,
 	/(?<plain>[^ \t\r\n]+)/y,
 );
 
 type Rules = typeof POSIX;
-type WordPart = { literal?: string; double?: string; windowsSingle?: string; escaped?: string; plain?: string };
+type WordPart = { literal?: string; double?: string; escaped?: string; plain?: string };
 
-function partValue({ literal, double, windowsSingle, escaped, plain }: WordPart) {
-	return literal ?? double?.replace(/\\(["\\$`])/g, "$1") ?? windowsSingle?.replace(/'\\''|''/g, "'") ?? escaped ?? plain ?? "";
+function partValue({ literal, double, escaped, plain }: WordPart) {
+	return literal ?? double?.replace(/\\(["\\$`])/g, "$1") ?? escaped ?? plain ?? "";
 }
 
 function readWord(text: string, start: number, { quotedWordPart, bareWordPart }: Rules) {

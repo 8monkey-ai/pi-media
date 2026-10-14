@@ -13,20 +13,15 @@ const readThenAnswer = (path: string) => (messages: Message[]) => {
 	return fauxAssistantMessage(fauxToolCall("read", { path }, { id: "call-1" }), { stopReason: "toolUse" });
 };
 
-// The Chat Completions tool messages of the request.
-function toolPayload(messages: Message[]) {
+// The Chat Completions user and tool messages of the request.
+function userAndToolPayload(messages: Message[]) {
 	return {
-		messages: messages.flatMap((message) =>
-			message.role === "toolResult"
-				? [
-						{
-							role: "tool",
-							content: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
-							tool_call_id: message.toolCallId,
-						},
-					]
-				: [],
-		),
+		messages: messages.flatMap((message) => {
+			if (message.role === "user") return [{ role: "user", content: message.content }];
+			if (message.role !== "toolResult") return [];
+			const content = message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
+			return [{ role: "tool", content, tool_call_id: message.toolCallId }];
+		}),
 	};
 }
 
@@ -36,11 +31,13 @@ async function startReadSession(api: string, name: string, bytes: string | Buffe
 		api,
 		tools: ["read"],
 		reply: readThenAnswer(name),
-		payload: toolPayload,
+		payload: userAndToolPayload,
 	});
 	await started.settle(started.session.prompt(`summarize ${name}`));
 	return started;
 }
+
+const NOT_IN_REQUEST = "[The API of the current model cannot take this file type. The file content is not in this request.]";
 
 const readPdf = (api: string) => startReadSession(api, "report.pdf", "%PDF-1.4");
 
@@ -66,6 +63,7 @@ test("stores the PDF bytes in the tool result details, marks the request copy, a
 	]);
 	assert.deepEqual(requests[1].payload, {
 		messages: [
+			{ role: "user", content: [{ type: "text", text: "summarize report.pdf" }] },
 			{ role: "tool", content: note, tool_call_id: "call-1" },
 			{
 				role: "user",
@@ -97,11 +95,35 @@ for (const [api, name, bytes, kind] of [
 		assert.deepEqual(toolResultContents(requests[1].messages), [
 			[
 				{ type: "text", text: `Read ${kind}: ${join(dir, name)}` },
-				{
-					type: "text",
-					text: "[The API of the current model cannot take this file type. The file content is not in this request.]",
-				},
+				{ type: "text", text: NOT_IN_REQUEST },
 			],
 		]);
 	});
 }
+
+test("sends a model that needs an assistant message after tool results the PDF from the message and not the PDF from the read tool", async () => {
+	const { session, dir, requests, settle } = await startSession([extension], {
+		files: { "report.pdf": "%PDF-1.4" },
+		compat: { requiresAssistantAfterToolResult: true },
+		tools: ["read"],
+		reply: readThenAnswer("report.pdf"),
+		payload: userAndToolPayload,
+	});
+	await settle(session.prompt("summarize @report.pdf"));
+	assert.deepEqual(requests[1].payload, {
+		messages: [
+			{
+				role: "user",
+				content: [
+					{ type: "text", text: "summarize @report.pdf" },
+					{ type: "file", file: { filename: "report.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } },
+				],
+			},
+			{
+				role: "tool",
+				content: `Read PDF file [application/pdf]: ${join(dir, "report.pdf")}\n${NOT_IN_REQUEST}`,
+				tool_call_id: "call-1",
+			},
+		],
+	});
+});

@@ -11,10 +11,8 @@ function firstText(content: UserContent) {
 }
 
 // Pi adds image hints after a blank line when it resizes or converts an image in the same message.
-// An entry with the exact text comes first, because the text of an entry can itself hold a blank line.
 function findEntryFor(pending: MediaEntry[], text: string) {
-	const exact = pending.findLastIndex((entry) => entry.data.text === text);
-	return exact !== -1 ? exact : pending.findLastIndex((entry) => text.startsWith(`${entry.data.text}\n\n`));
+	return pending.findLastIndex(({ data }) => text === data.text || text.startsWith(`${data.text}\n\n`));
 }
 
 // Each user message on the branch takes the newest earlier pi-media entry with its text that no other message took.

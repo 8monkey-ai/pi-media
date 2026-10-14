@@ -57,9 +57,14 @@ function markToolResults(messages: Messages, branch: SessionEntry[], carries: Ca
 	});
 }
 
-// Changes the messages of this request only. Without `carries`, the request carries no file. Returns undefined when no
-// message changes.
-export function markContext(messages: Messages, branch: SessionEntry[], carries: Carries = () => false) {
-	const marked = markToolResults(markUserMessages(messages, branch, carries), branch, carries);
+// Changes the messages of this request only. Without `carries`, the request carries no file. `toolResultCarries` decides
+// for the files of tool results. Returns undefined when no message changes.
+export function markContext(
+	messages: Messages,
+	branch: SessionEntry[],
+	carries: Carries = () => false,
+	toolResultCarries = carries,
+) {
+	const marked = markToolResults(markUserMessages(messages, branch, carries), branch, toolResultCarries);
 	return marked.some((message, index) => message !== messages[index]) ? { messages: marked } : undefined;
 }
