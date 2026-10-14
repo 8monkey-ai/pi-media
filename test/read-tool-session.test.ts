@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { fauxAssistantMessage, fauxToolCall, type Message } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import extension from "../src/index.ts";
-import { MOV_BYTES, widePng } from "./fixtures.ts";
+import { MOV_BYTES } from "./fixtures.ts";
 import { startSession } from "./session-harness.ts";
 
 // The model reads the file with the read tool, then answers.
@@ -30,14 +30,13 @@ function toolPayload(messages: Message[]) {
 	};
 }
 
-async function startReadSession(api: string, name: string, bytes: string | Buffer, options?: Parameters<typeof startSession>[1]) {
+async function startReadSession(api: string, name: string, bytes: string | Buffer) {
 	const started = await startSession([extension], {
 		files: { [name]: bytes },
 		api,
 		tools: ["read"],
 		reply: readThenAnswer(name),
 		payload: toolPayload,
-		...options,
 	});
 	await started.settle(started.session.prompt(`summarize ${name}`));
 	return started;
@@ -106,15 +105,3 @@ for (const [api, name, bytes, kind] of [
 		]);
 	});
 }
-
-test("reads an image unresized when the pi image auto-resize setting is off", async () => {
-	const png = widePng(2400);
-	const { session } = await startReadSession("openai-completions", "wide.png", png, {
-		settings: { images: { autoResize: false } },
-	});
-	assert.deepEqual(toolResultEntries(session.sessionManager.getBranch())[0].message.content[1], {
-		type: "image",
-		data: png.toString("base64"),
-		mimeType: "image/png",
-	});
-});

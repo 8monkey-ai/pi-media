@@ -1,4 +1,5 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { matchInOrder } from "./match-in-order.ts";
 import { isMediaEntry, type MediaEntry, type Messages } from "./media-entry.ts";
 
 type UserContent = Extract<Messages[number], { role: "user" }>["content"];
@@ -39,15 +40,9 @@ function linkUserMessages(branch: SessionEntry[]) {
 // Context messages have no entry ids. User messages keep the branch order and the timestamp of their entry,
 // and queued messages can share one timestamp, so the match walks both lists in order.
 export function mediaForContext(messages: Messages, branch: SessionEntry[]) {
-	const users = linkUserMessages(branch);
-	let next = 0;
-	return messages.map((message) => {
-		if (message.role !== "user") return [];
-		for (let index = next; index < users.length; index++) {
-			if (users[index].timestamp !== message.timestamp) continue;
-			next = index + 1;
-			return users[index].entries;
-		}
-		return [];
-	});
+	return matchInOrder(
+		messages,
+		linkUserMessages(branch),
+		(message, user) => message.role === "user" && message.timestamp === user.timestamp,
+	).map((user) => user?.entries ?? []);
 }

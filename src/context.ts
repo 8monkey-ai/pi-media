@@ -1,6 +1,7 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { mediaForContext } from "./link.ts";
 import { makeMarker } from "./marker.ts";
+import { matchInOrder } from "./match-in-order.ts";
 import { type Messages, toolResultAttachment } from "./media-entry.ts";
 
 type Carries = (mimeType: string) => boolean;
@@ -32,17 +33,14 @@ function toolResultEntryIds(messages: Messages, branch: SessionEntry[]) {
 	const entries = branch.flatMap((entry) =>
 		entry.type === "message" && entry.message.role === "toolResult" ? [{ id: entry.id, message: entry.message }] : [],
 	);
-	let next = 0;
-	return messages.map((message) => {
-		if (message.role !== "toolResult") return undefined;
-		for (let index = next; index < entries.length; index++) {
-			const entry = entries[index];
-			if (entry.message.timestamp !== message.timestamp || entry.message.toolCallId !== message.toolCallId) continue;
-			next = index + 1;
-			return entry.id;
-		}
-		return undefined;
-	});
+	return matchInOrder(
+		messages,
+		entries,
+		(message, entry) =>
+			message.role === "toolResult" &&
+			message.timestamp === entry.message.timestamp &&
+			message.toolCallId === entry.message.toolCallId,
+	).map((entry) => entry?.id);
 }
 
 // Adds a marker block to each tool result whose attachment the request carries, and a note to the other tool results

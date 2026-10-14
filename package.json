@@ -44,7 +44,6 @@
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^22",
-    "openai": "^7.19.0",
     "typescript": "^5"
   },
   "keywords": [

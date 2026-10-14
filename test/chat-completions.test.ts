@@ -19,9 +19,6 @@ const attachments: Attachment[] = [
 	{ path: "/gone/clip.webm", mimeType: "video/webm", data: "GkXfow==" },
 	{ path: "/gone/clip.mov", mimeType: "video/quicktime", data: "AAAAFGZ0eXBxdA==" },
 	{ path: "/gone/a.opus", mimeType: "audio/ogg; codecs=opus", data: "T2dnUwAC" },
-	{ path: "/gone/a.m4b", mimeType: "audio/mp4", data: "AAAAHGZ0eXBNNEI=" },
-	{ path: "/gone/shot.heic", mimeType: "image/heic", data: "AAAA" },
-	{ path: "/gone/clip.ogv", mimeType: "video/ogg", data: "T2dnUwAC" },
 ];
 
 const findIn =
@@ -85,9 +82,7 @@ test("leaves user text that only contains a marker", async () => {
 });
 
 test("removes markers of types it does not carry and of missing attachments, and keeps the typed text", async () => {
-	const payload = await usersPayload([
-		[text("hi"), text("[[pi-media:gone:0]]"), marker(99), marker(11), marker(12), marker(13), marker(14), marker(15)],
-	]);
+	const payload = await usersPayload([[text("hi"), text("[[pi-media:gone:0]]"), marker(99), marker(11), marker(12)]]);
 	assert.deepEqual(contentOf(rewrite(payload, find, false)), [[text("hi")]]);
 });
 

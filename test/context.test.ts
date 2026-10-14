@@ -66,16 +66,8 @@ test("leaves the messages as they are when the request carries none of the attac
 	assert.deepEqual(sent(messages, branch, undefined), messages);
 });
 
-test("leaves the messages as they are when no user message has media", () => {
+test("ignores custom entries of other extensions", () => {
 	const session = SessionManager.inMemory("/");
-	session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
-	const messages = [{ role: "user" as const, content: "hello", timestamp: 1 }];
-	assert.deepEqual(sent(messages, session.getBranch(), carriesAll), messages);
-});
-
-test("ignores custom entries of other extensions and pi-media entries without the attachment shape", () => {
-	const session = SessionManager.inMemory("/");
-	session.appendCustomEntry("pi-media", { text: "look", attachments: [{ path: 1 }] });
 	session.appendCustomEntry("other-ext", {
 		text: "look",
 		attachments: [{ path: "/a.pdf", mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],

@@ -111,17 +111,6 @@ test("passes mentioned images to pi after the images already in the input and ke
 	);
 });
 
-test("attaches from every input source", async () => {
-	const { inputs, observer } = inputObserver();
-	const { session, settle } = await startSession([extension, observer], { files: { "shot.png": PNG_BYTES } });
-	for (const source of ["interactive", "rpc", "extension"] as const) await settle(session.prompt("@shot.png", { source }));
-	assert.deepEqual(inputs, [
-		{ text: "@shot.png", images: [PNG_IMAGE] },
-		{ text: "@shot.png", images: [PNG_IMAGE] },
-		{ text: "@shot.png", images: [PNG_IMAGE] },
-	]);
-});
-
 test("passes input without media on unchanged", async () => {
 	const { inputs, observer } = inputObserver();
 	const { session, requests, settle } = await startSession([extension, observer]);

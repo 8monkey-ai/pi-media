@@ -33,7 +33,6 @@ type SessionOptions = {
 	tools?: string[];
 	reply?: (messages: Message[]) => AssistantMessage;
 	payload?: (messages: Message[]) => unknown;
-	settings?: Parameters<typeof SettingsManager.inMemory>[0];
 };
 
 // Extensions find their config through `getAgentDir()`, so it names the session directory while they load.
@@ -55,7 +54,6 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 // `tools` names the active tools.
 // `reply` makes the answer of the model from the request messages, for example a tool call.
 // `payload` makes the provider payload from the request messages.
-// `settings` are pi settings in addition to the ones that turn off compaction and retry.
 export async function startSession(
 	extensions: ExtensionFactory[],
 	{
@@ -65,7 +63,6 @@ export async function startSession(
 		tools = [],
 		reply = () => fauxAssistantMessage("ok"),
 		payload: makePayload = userPayload,
-		settings,
 	}: SessionOptions = {},
 ) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-media-session-"));
@@ -88,7 +85,7 @@ export async function startSession(
 
 	const modelRuntime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
 	modelRuntime.registerNativeProvider(faux.provider);
-	const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false }, ...settings });
+	const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: dir,
 		agentDir: dir,

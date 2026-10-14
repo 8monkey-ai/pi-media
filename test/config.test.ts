@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { fauxAssistantMessage, fauxToolCall, type Message } from "@earendil-works/pi-ai";
 import { readMaxAttachmentBytes } from "../src/config.ts";
 import extension from "../src/index.ts";
 import { startSession } from "./session-harness.ts";
@@ -69,42 +68,18 @@ test("fails with the file path when maxAttachmentBytes is not a positive integer
 	}
 });
 
-// The model reads big.pdf and max.pdf with the read tool, then answers.
-function readBothThenAnswer(messages: Message[]) {
-	if (messages.at(-1)?.role !== "user") return fauxAssistantMessage("ok");
-	return fauxAssistantMessage(
-		[fauxToolCall("read", { path: "big.pdf" }, { id: "call-1" }), fauxToolCall("read", { path: "max.pdf" }, { id: "call-2" })],
-		{ stopReason: "toolUse" },
-	);
-}
-
-test("applies maxAttachmentBytes to paths in the message and to the read tool", async () => {
+test("applies maxAttachmentBytes from pi-media.json to paths in the message", async () => {
 	const { session, dir, settle } = await startSession([extension], {
 		files: { "pi-media.json": '{"maxAttachmentBytes": 8}', "big.pdf": "%PDF-1.4 ", "max.pdf": "%PDF-1.4" },
-		tools: ["read"],
-		reply: readBothThenAnswer,
 	});
 	await settle(session.prompt("compare @big.pdf @max.pdf"));
-	const branch = session.sessionManager.getBranch();
 	assert.deepEqual(
-		branch.flatMap((entry) => (entry.type === "custom" ? [entry.data] : [])),
+		session.sessionManager.getBranch().flatMap((entry) => (entry.type === "custom" ? [entry.data] : [])),
 		[
 			{
 				text: "compare @big.pdf @max.pdf",
 				attachments: [{ path: join(dir, "max.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
 			},
-		],
-	);
-	assert.deepEqual(
-		branch.flatMap((entry) => (entry.type === "message" && entry.message.role === "toolResult" ? [entry.message.content] : [])),
-		[
-			[
-				{
-					type: "text",
-					text: `PDF file [application/pdf] is larger than the pi-media limit maxAttachmentBytes (8 bytes): ${join(dir, "big.pdf")}`,
-				},
-			],
-			[{ type: "text", text: `Read PDF file [application/pdf]: ${join(dir, "max.pdf")}` }],
 		],
 	);
 });

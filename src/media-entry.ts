@@ -16,11 +16,7 @@ function isAttachment(value: unknown): value is Attachment {
 }
 
 export function isMediaEntry(entry: SessionEntry | undefined): entry is MediaEntry {
-	if (entry?.type !== "custom" || entry.customType !== ENTRY_TYPE) return false;
-	const { data } = entry;
-	return (
-		isRecord(data) && typeof data.text === "string" && Array.isArray(data.attachments) && data.attachments.every(isAttachment)
-	);
+	return entry?.type === "custom" && entry.customType === ENTRY_TYPE;
 }
 
 // pi-media's read tool keeps the attachment of a media file in the `details` of its tool result.

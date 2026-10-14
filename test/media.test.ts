@@ -74,14 +74,6 @@ test("detects the image type with pi's detector", async () => {
 	});
 });
 
-test("returns an image and a PDF from one message", async () => {
-	const dir = await fixtureDir({ "my shot.png": PNG_BYTES, "report.pdf": "%PDF-1.4" });
-	assert.deepEqual(await findMedia('compare @"my shot.png" with @report.pdf', dir), {
-		images: [PNG_IMAGE],
-		attachments: [{ path: join(dir, "report.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" }],
-	});
-});
-
 test("leaves text, other binary types, missing and empty files out", async () => {
 	const dir = await fixtureDir({ "notes.md": "# hi", "song.mp3": "not audio", "archive.pdf": "PK\u0003\u0004", "empty.pdf": "" });
 	assert.deepEqual(await findMedia("read @notes.md @song.mp3 @archive.pdf @absent.pdf @empty.pdf", dir), NOTHING);

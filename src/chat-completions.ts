@@ -1,7 +1,6 @@
-import type { ChatCompletionContentPartText } from "openai/resources/chat/completions";
 import { filePart } from "./file-parts.ts";
 import { isRecord } from "./is-record.ts";
-import { takeMarkers } from "./marker.ts";
+import { parseMarker, takeMarkerLines } from "./marker.ts";
 import type { Attachment } from "./media-entry.ts";
 
 type FindAttachment = (entryId: string, index: number) => Attachment | undefined;
@@ -9,7 +8,7 @@ type Message = Record<string, unknown>;
 
 const textOf = (node: unknown) =>
 	isRecord(node) && node.type === "text" && typeof node.text === "string" ? node.text : undefined;
-const textPart = (text: string) => ({ type: "text", text }) satisfies ChatCompletionContentPartText;
+const textPart = (text: string) => ({ type: "text", text });
 const isText = (node: unknown): node is Message => textOf(node) !== undefined;
 const isRole = (message: unknown, role: string): message is Message => isRecord(message) && message.role === role;
 
@@ -22,15 +21,11 @@ function partsOf(markers: { entryId: string; index: number }[], attachment: Find
 	});
 }
 
-function cacheControlOf(content: unknown[]) {
-	return content.filter(isText).find((node) => node.cache_control !== undefined)?.cache_control;
-}
-
 // pi-ai puts `cache_control` on the last text part of the last message, which is often a marker block.
 // The same rule applied to the new content puts it where it would be without the marker.
 function keepCacheControl(before: unknown[], after: unknown[]) {
-	const cacheControl = cacheControlOf(before);
-	if (cacheControl === undefined || cacheControlOf(after) !== undefined) return after;
+	const cacheControl = before.findLast(isText)?.cache_control;
+	if (cacheControl === undefined) return after;
 	const last = after.findLastIndex(isText);
 	const node = after[last];
 	return isText(node) ? after.with(last, { ...node, cache_control: cacheControl }) : after;
@@ -38,8 +33,8 @@ function keepCacheControl(before: unknown[], after: unknown[]) {
 
 // The context hook adds each marker to a user message as a block of its own, and pi-ai keeps the blocks.
 function splitText(text: string, attachment: FindAttachment) {
-	const taken = takeMarkers(text, false);
-	return taken && partsOf(taken.markers, attachment);
+	const marker = parseMarker(text);
+	return marker && partsOf([marker], attachment);
 }
 
 function rewriteUserMessage(message: unknown, attachment: FindAttachment) {
@@ -60,30 +55,15 @@ function rewriteUserMessage(message: unknown, attachment: FindAttachment) {
 	};
 }
 
-// pi-ai joins the text of a tool result with "\n".
-function takeToolMarkers(text: string, attachment: FindAttachment) {
-	const taken = takeMarkers(text, true);
-	return taken && { text: taken.text, parts: partsOf(taken.markers, attachment) };
-}
-
-// Tool message content is a string, or text parts when pi-ai adds a cache marker to it.
+// pi-ai gives tool message content as a string, or as one text part when it adds a cache marker to it.
 function rewriteToolMessage(message: unknown, attachment: FindAttachment) {
 	if (!isRole(message, "tool")) return undefined;
-	const { content } = message;
-	if (typeof content === "string") {
-		const taken = takeToolMarkers(content, attachment);
-		return taken && { message: { ...message, content: taken.text }, parts: taken.parts };
-	}
-	if (!Array.isArray(content)) return undefined;
-	const taken = content.map((node) => {
-		const text = textOf(node);
-		return text === undefined ? undefined : takeToolMarkers(text, attachment);
-	});
-	if (taken.every((entry) => entry === undefined)) return undefined;
-	return {
-		message: { ...message, content: content.map((node, index) => (taken[index] ? { ...node, text: taken[index].text } : node)) },
-		parts: taken.flatMap((entry) => entry?.parts ?? []),
-	};
+	const [part] = Array.isArray(message.content) ? message.content : [];
+	const text = typeof message.content === "string" ? message.content : textOf(part);
+	const taken = text === undefined ? undefined : takeMarkerLines(text);
+	if (!taken) return undefined;
+	const content = isText(part) ? [{ ...part, text: taken.text }] : taken.text;
+	return { message: { ...message, content }, parts: partsOf(taken.markers, attachment) };
 }
 
 function toolRuns(messages: unknown[]) {
