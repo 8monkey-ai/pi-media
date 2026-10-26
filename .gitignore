@@ -9,9 +9,6 @@ lerna-debug.log*
 # database
 *.sqlite
 
-# package-json
-package-lock.json
-
 # bun deploy file
 node_modules.bun
 
