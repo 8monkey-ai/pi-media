@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
@@ -6,7 +6,9 @@ import type { TLocalizedValidationError } from "typebox/error";
 import { Value } from "typebox/value";
 import { isRecord } from "./is-record.ts";
 
-const MEDIA_KINDS = ["image", "audio", "document"] as const;
+export const MEDIA_KINDS = ["image", "audio", "document"] as const;
+export type MediaKind = (typeof MEDIA_KINDS)[number];
+export type MediaSetting = `${MediaKind}Model`;
 
 const MediaModel = Type.Object({
 	provider: Type.String({ minLength: 1 }),
@@ -22,6 +24,7 @@ const Settings = Type.Object({
 	documentModel: Type.Optional(MediaModel),
 });
 export type Settings = Static<typeof Settings> & { maxAttachmentBytes: number };
+export type MediaModel = Static<typeof MediaModel>;
 
 // Pi has no settings section for extensions, so pi-media keeps its settings in a file of its own.
 function readConfigFile(path: string) {
@@ -58,13 +61,29 @@ function describeError(path: string, config: unknown, error: TLocalizedValidatio
 	return `pi-media: ${setting} ${rule}, got ${JSON.stringify(Value.Pointer.Get(config, error.instancePath))}`;
 }
 
+function readConfig(path: string) {
+	const text = readConfigFile(path);
+	return text === undefined ? {} : parseConfig(path, text);
+}
+
 export function readSettings() {
 	const path = join(getAgentDir(), "pi-media.json");
-	const text = readConfigFile(path);
-	const config = text === undefined ? {} : parseConfig(path, text);
+	const config = readConfig(path);
 	if (!Value.Check(Settings, config)) throw new Error(describeError(path, config, Value.Errors(Settings, config)[0]));
 	const settings: Settings = { ...config, maxAttachmentBytes: config.maxAttachmentBytes ?? 20 * 1024 * 1024 };
 	return { path, settings };
+}
+
+// Reads the file again, so that the other keys stay as the file has them. `settings` changes only after the write succeeds.
+export function saveMediaModel(path: string, settings: Settings, setting: MediaSetting, model: MediaModel | undefined) {
+	const update = (record: Record<string, unknown>) => {
+		if (model === undefined) delete record[setting];
+		else record[setting] = model;
+	};
+	const config = readConfig(path);
+	update(config);
+	writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+	update(settings);
 }
 
 export function mediaModels(settings: Settings) {

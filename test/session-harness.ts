@@ -38,6 +38,8 @@ type SessionOptions = {
 	reply?: (messages: Message[]) => AssistantMessage;
 	payload?: (messages: Message[]) => unknown;
 	mode?: "tui" | "rpc" | "print";
+	models?: string[];
+	answers?: Array<string | undefined>;
 };
 
 // Extensions find their config through `getAgentDir()`, so it names the session directory while they load.
@@ -55,9 +57,15 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 type CustomFactory = Parameters<ExtensionUIContext["custom"]>[0];
 
 // `custom` records the text of each component that it shows, and `press` sends keys to the component that shows now.
-function recordingUI() {
+function recordingUI(answerList: Array<string | undefined>) {
+	const answers = [...answerList];
 	const notifications: Array<{ message: string; type?: string }> = [];
 	const statuses: Record<string, string> = {};
+	const dialogs: Array<{ title: string; options?: string[] }> = [];
+	const answer = () => {
+		if (answers.length === 0) throw new Error("The test has no answer for this dialog");
+		return Promise.resolve(answers.shift());
+	};
 	const customs: string[] = [];
 	let shown: Awaited<ReturnType<CustomFactory>> | undefined;
 	// Pi's components read the global theme, which pi sets up in the terminal UI.
@@ -74,7 +82,7 @@ function recordingUI() {
 				customs.push(component.render(80).join("\n"));
 			});
 		});
-	// The extensions under test call only `notify`, `setStatus` and `custom`.
+	// The extensions under test call only `notify`, `setStatus`, `custom`, `select` and `input`.
 	const uiContext = {
 		custom,
 		notify: (message, type) => {
@@ -84,9 +92,20 @@ function recordingUI() {
 			if (text === undefined) delete statuses[key];
 			else statuses[key] = text;
 		},
+		select: (title, options) => {
+			dialogs.push({ title, options });
+			if (answers[0] !== undefined && !options.includes(answers[0])) {
+				throw new Error(`The answer ${JSON.stringify(answers[0])} is not an option of "${title}"`);
+			}
+			return answer();
+		},
+		input: (title) => {
+			dialogs.push({ title });
+			return answer();
+		},
 	} as ExtensionUIContext;
 	const press = (data: string) => shown?.handleInput?.(data);
-	return { notifications, statuses, customs, press, uiContext };
+	return { notifications, statuses, customs, dialogs, press, uiContext };
 }
 
 // Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
@@ -99,6 +118,9 @@ function recordingUI() {
 // `reply` makes the answer of the model from the request messages, for example a tool call.
 // `payload` makes the provider payload from the request messages.
 // `mode` is the mode that pi runs in. Print mode has no UI.
+// `models` are the IDs of the faux models. The faux provider has credentials, so they are in pi's list of available models.
+// `answers` are the replies of the user to `select` and `input`, in order. `undefined` is Esc. `dialogs` records each dialog.
+// `errors` records the errors that pi catches in extension handlers and commands, also the errors of the recording UI.
 export async function startSession(
 	extensions: ExtensionFactory[],
 	{
@@ -110,6 +132,8 @@ export async function startSession(
 		reply = () => fauxAssistantMessage("ok"),
 		payload: makePayload = userPayload,
 		mode = "tui",
+		models,
+		answers = [],
 	}: SessionOptions = {},
 ) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-media-session-"));
@@ -117,7 +141,7 @@ export async function startSession(
 
 	const gates: Array<() => void> = [];
 	const requests: ModelRequest[] = [];
-	const faux = fauxProvider({ api });
+	const faux = fauxProvider({ api, models: models?.map((id) => ({ id })) });
 	const respond: FauxResponseFactory = async (context, options, _state, model) => {
 		const payload = makePayload(context.messages);
 		requests.push({ messages: context.messages, payload: (await options?.onPayload?.(payload, model)) ?? payload });
@@ -128,6 +152,8 @@ export async function startSession(
 
 	const modelRuntime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
 	modelRuntime.registerNativeProvider(faux.provider);
+	await modelRuntime.setRuntimeApiKey(faux.provider.id, "faux-key");
+	await modelRuntime.refresh({ providers: [faux.provider.id] });
 	const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: dir,
@@ -147,8 +173,12 @@ export async function startSession(
 		sessionManager: sessionManager?.(dir) ?? SessionManager.inMemory(dir),
 		tools,
 	});
-	const { uiContext, customs, press, ...ui } = recordingUI();
-	await session.bindExtensions(mode === "print" ? { mode } : { uiContext, mode });
+	const { uiContext, customs, press, dialogs, ...ui } = recordingUI(answers);
+	const errors: string[] = [];
+	await session.bindExtensions({
+		...(mode === "print" ? { mode } : { uiContext, mode }),
+		onError: ({ error }) => errors.push(error),
+	});
 
 	async function waitFor(condition: () => boolean) {
 		while (!condition()) await new Promise((resolve) => setTimeout(resolve, 1));
@@ -168,7 +198,7 @@ export async function startSession(
 		}
 	}
 
-	return { session, dir, requests, ui, customs, press, waitFor, waitForCall, settle };
+	return { session, dir, requests, ui, customs, press, dialogs, errors, waitFor, waitForCall, settle };
 }
 
 // Runs after pi-media and records the input that pi-media passes on.
