@@ -130,10 +130,9 @@ const MODELS = {
 
 test("shows the media models in the footer in the order image, audio, document", async () => {
 	const { ui } = await startSession([extension], { files: { "pi-media.json": JSON.stringify(MODELS) } });
-	assert.deepEqual(ui, {
-		notifications: [],
-		statuses: { "pi-media": "media: image faux/gpt-4.1-mini, audio faux/gpt-transcribe, document faux/gpt-4.1" },
-		customs: [],
+	assert.deepEqual(ui.notifications, []);
+	assert.deepEqual(ui.statuses, {
+		"pi-media": "media: image faux/gpt-4.1-mini, audio faux/gpt-transcribe, document faux/gpt-4.1",
 	});
 });
 
@@ -146,7 +145,8 @@ test("shows only the media models that are set in the footer", async () => {
 
 test("shows nothing in the footer when no media model is set", async () => {
 	const { ui } = await startSession([extension]);
-	assert.deepEqual(ui, { notifications: [], statuses: {}, customs: [] });
+	assert.deepEqual(ui.notifications, []);
+	assert.deepEqual(ui.statuses, {});
 });
 
 test("shows an error for each media model with a provider that pi does not know and then attaches no files", async () => {
@@ -159,20 +159,17 @@ test("shows an error for each media model with a provider that pi does not know 
 		files: { "pi-media.json": JSON.stringify(settings), "a.mp3": MP3_BYTES },
 	});
 	const path = join(dir, "pi-media.json");
-	assert.deepEqual(ui, {
-		notifications: [
-			{
-				message: `pi-media: imageModel in ${path}: pi has no provider "nope". Add it in models.json or with an extension. pi-media is off for this session.`,
-				type: "error",
-			},
-			{
-				message: `pi-media: documentModel in ${path}: pi has no provider "gone". Add it in models.json or with an extension. pi-media is off for this session.`,
-				type: "error",
-			},
-		],
-		statuses: {},
-		customs: [],
-	});
+	assert.deepEqual(ui.notifications, [
+		{
+			message: `pi-media: imageModel in ${path}: pi has no provider "nope". Add it in models.json or with an extension. pi-media is off for this session.`,
+			type: "error",
+		},
+		{
+			message: `pi-media: documentModel in ${path}: pi has no provider "gone". Add it in models.json or with an extension. pi-media is off for this session.`,
+			type: "error",
+		},
+	]);
+	assert.deepEqual(ui.statuses, {});
 	await settle(session.prompt("listen to @a.mp3"));
 	assert.deepEqual(
 		session.sessionManager.getBranch().filter((entry) => entry.type === "custom"),

@@ -2,12 +2,12 @@ import { basename } from "node:path";
 import { isRecord } from "./is-record.ts";
 import type { MediaApi } from "./media-api.ts";
 
-// OpenAI-compatible servers give the reason in `error.message` of a JSON body.
+// OpenAI-compatible servers give the reason in `error.message` of a JSON body. Other bodies, such as the HTML page of a
+// proxy, go in no note.
 async function failureReason(response: Response) {
-	const body = await response.text();
-	let message = body.trim() || response.statusText;
+	let message = response.statusText;
 	try {
-		const parsed: unknown = JSON.parse(body);
+		const parsed: unknown = JSON.parse(await response.text());
 		if (isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.message === "string") message = parsed.error.message;
 	} catch {}
 	return `${response.status} ${message}`;

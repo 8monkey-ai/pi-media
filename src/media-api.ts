@@ -6,11 +6,10 @@ type MediaCall = {
 	provider: string;
 	id: string;
 	instruction: string;
-	signal: AbortSignal | undefined;
+	signal: AbortSignal;
 };
 
-// `name` is the `api` value of a media model setting. `read` sends the file to the model and gives back its text. It
-// throws an error that gives the reason when the call fails.
+// `name` is the `api` value of a media model setting. `read` throws an error with the reason when the call fails.
 export type MediaApi = {
 	name: string;
 	read: (call: MediaCall, registry: ExtensionContext["modelRegistry"]) => Promise<string>;

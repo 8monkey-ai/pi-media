@@ -46,12 +46,14 @@ export default function (pi: ExtensionAPI) {
 	// the message.
 	pi.on("input", async (event, ctx) => {
 		if (!enabled) return { action: "continue" };
-		const deliverAs = event.streamingBehavior ?? "nextTurn";
 		// shortcut: pi gives the main model one queued message per turn, so a message sent while the agent works gets a turn
 		// with the text alone before the user message, upgrade when pi can deliver a custom message with a queued message.
 		// A `nextTurn` text stays pending when the prompt fails after this hook, and goes with the next prompt.
 		const send = (content: string, details: MediaTextDetails) =>
-			pi.sendMessage({ customType: TEXT_TYPE, content, display: true, details }, { deliverAs });
+			pi.sendMessage(
+				{ customType: TEXT_TYPE, content, display: true, details },
+				{ deliverAs: event.streamingBehavior ?? "nextTurn" },
+			);
 		// Pi puts its images before the text. Images that pi-media did not read from a path have no name, so their number
 		// names them.
 		const pasted = (event.images ?? []).map(({ data, mimeType }, index) => ({ path: `image ${index + 1}`, mimeType, data }));

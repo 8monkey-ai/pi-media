@@ -4,7 +4,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 export const TEXT_TYPE = "pi-media-text";
 export type MediaTextDetails = { error: boolean };
 
-// The content of a text message. The renderer shows the heading line apart from the text of the media model.
+// `parseMediaText` splits this back into the heading and the text.
 export const mediaText = (heading: string, text: string) => `${heading}\n\n${text}`;
 
 function parseMediaText(content: string) {

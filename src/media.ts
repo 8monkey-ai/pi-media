@@ -18,7 +18,7 @@ async function regularFileSize(path: string) {
 	}
 }
 
-// Images go to pi's own image handling, so pi's detector decides what an image is.
+// pi's detector decides what an image is, so pi-media and pi agree on which files are images.
 async function detectType(path: string) {
 	const imageType = await detectSupportedImageMimeTypeFromFile(path);
 	if (imageType) return { image: true, mimeType: imageType };
@@ -40,7 +40,6 @@ export async function readAttachment(path: string, mimeType: string) {
 	return { path, mimeType, data: (await readFile(path)).toString("base64") };
 }
 
-// Gives the files in the order of their mentions in the text.
 export async function findLocalMedia(text: string, cwd: string, maxBytes: number) {
 	let attachedEnd = 0;
 	const attachedPaths = new Set<string>();

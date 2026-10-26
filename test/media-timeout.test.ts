@@ -27,7 +27,7 @@ async function timedOutNotes(settings: Record<string, unknown>, file: string) {
 	return notes(session.sessionManager.getBranch());
 }
 
-test("stops a call to the transcription model after pi's HTTP idle timeout", async () => {
+test("stops a call to the transcription model after pi's HTTP idle timeout", { timeout: 5000 }, async () => {
 	const settings = { audioModel: { provider: "hebo", id: "gpt-transcribe", api: "openai-transcriptions" } };
 	assert.deepEqual(await timedOutNotes(settings, "a.mp3"), [
 		"pi-media: hebo/gpt-transcribe could not transcribe a.mp3: fetch failed: Headers Timeout Error.",
@@ -35,7 +35,7 @@ test("stops a call to the transcription model after pi's HTTP idle timeout", asy
 });
 
 // pi-ai adds a hint after "Request timed out." that can change in any release.
-test("stops a call to the chat model after pi's HTTP idle timeout", async () => {
+test("stops a call to the chat model after pi's HTTP idle timeout", { timeout: 5000 }, async () => {
 	const settings = { documentModel: { provider: "hebo", id: "gpt-4.1-mini", api: "openai-completions" } };
 	const [note, ...others] = await timedOutNotes(settings, "report.pdf");
 	assert.ok(note.startsWith("pi-media: hebo/gpt-4.1-mini could not read report.pdf: Request timed out."), note);

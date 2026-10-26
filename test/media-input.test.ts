@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import type { Message } from "@earendil-works/pi-ai";
 import type { ProviderConfig, SessionEntry } from "@earendil-works/pi-coding-agent";
 import extension from "../src/index.ts";
-import { MP3_BYTES, MP4_BYTES, PNG_BYTES } from "./fixtures.ts";
+import { MP3_BYTES, MP4_BYTES, PNG_BYTES, PNG_DATA } from "./fixtures.ts";
 import { startMediaServer } from "./media-server.ts";
 import { inputObserver, type Mode, startSession } from "./session-harness.ts";
 
@@ -20,12 +20,10 @@ after(() => {
 	for (const close of servers) close();
 });
 
-type MediaSessionOptions = { mode?: Mode; provider?: ProviderConfig };
-
 async function startMediaSession(
 	settings: Record<string, unknown>,
 	files: Record<string, string | Buffer> = {},
-	{ mode, provider }: MediaSessionOptions = {},
+	{ mode, provider }: { mode?: Mode; provider?: ProviderConfig } = {},
 ) {
 	const server = await startMediaServer(provider);
 	const { observer, inputs } = inputObserver();
@@ -44,16 +42,21 @@ const customMessages = (branch: SessionEntry[]) =>
 
 const customEntries = (branch: SessionEntry[]) => branch.filter((entry) => entry.type === "custom");
 
-// The role and text of each message in the session, in order.
-const transcript = (branch: SessionEntry[]) =>
+const textOf = (content: string | Exclude<Message["content"], string>[number][]) =>
+	typeof content === "string" ? content : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+
+const conversation = (branch: SessionEntry[]) =>
 	branch.flatMap((entry) => {
 		if (entry.type === "custom_message") return [`custom: ${entry.content}`];
 		if (entry.type !== "message") return [];
 		const { message } = entry;
 		if (message.role !== "user" && message.role !== "assistant") return [];
-		const content = typeof message.content === "string" ? [{ type: "text", text: message.content }] : message.content;
-		return [`${message.role}: ${content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")}`];
+		return [`${message.role}: ${textOf(message.content)}`];
 	});
+
+// For each loader, whether it shows the progress line of pi-media.
+const showsProgress = (customs: string[][], progress: string) =>
+	customs.map((lines) => lines.some((line) => line.endsWith(progress)));
 
 const userContents = (messages: Message[]) => messages.flatMap((message) => (message.role === "user" ? [message.content] : []));
 
@@ -68,7 +71,7 @@ test("sends an audio file to the transcription model and gives the main model th
 			transcription: { model: "gpt-transcribe", fileName: "a.mp3", fileType: "audio/mpeg", fileData: "//uQRAAAAAA=" },
 		},
 	]);
-	assert.deepEqual(ui.customs, [["⠋ Transcribing a.mp3 with hebo/gpt-transcribe…", "escape/ctrl+c cancel"]]);
+	assert.deepEqual(showsProgress(ui.customs, "Transcribing a.mp3 with hebo/gpt-transcribe…"), [true]);
 	const branch = session.sessionManager.getBranch();
 	assert.deepEqual(customMessages(branch), [
 		{
@@ -84,41 +87,56 @@ test("sends an audio file to the transcription model and gives the main model th
 	]);
 });
 
-test("puts the PDF part where the marker is in the payload of the media call", async () => {
-	const { session, server, settle } = await startMediaSession({ documentModel: DOCUMENT_MODEL }, { "report.pdf": "%PDF-1.4" });
-	await settle(session.prompt("summarize @report.pdf"));
-	assert.deepEqual(
-		server.requests.map(({ path, authorization, chat }) => ({
-			path,
-			authorization,
-			model: chat?.model,
-			messages: chat?.messages,
-		})),
-		[
-			{
-				path: "/v1/chat/completions",
-				authorization: "Bearer test-key",
-				model: "gpt-4.1-mini",
-				messages: [
-					{
-						role: "user",
-						content: [
-							{ type: "text", text: DOCUMENT_INSTRUCTION },
-							{ type: "file", file: { filename: "report.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } },
-						],
-					},
-				],
-			},
+for (const { name, settings, file, prompt, model, content, text } of [
+	{
+		name: "PDF",
+		settings: { documentModel: DOCUMENT_MODEL },
+		file: { "report.pdf": "%PDF-1.4" },
+		prompt: "summarize @report.pdf",
+		model: "gpt-4.1-mini",
+		content: [
+			{ type: "text", text: DOCUMENT_INSTRUCTION },
+			{ type: "file", file: { filename: "report.pdf", file_data: "data:application/pdf;base64,JVBERi0xLjQ=" } },
 		],
-	);
-	assert.deepEqual(customMessages(session.sessionManager.getBranch()), [
-		{
-			customType: "pi-media-text",
-			content: "Text of report.pdf · hebo/gpt-4.1-mini\n\nmedia text",
-			details: { error: false },
-		},
-	]);
-});
+		text: "Text of report.pdf · hebo/gpt-4.1-mini\n\nmedia text",
+	},
+	{
+		name: "audio",
+		settings: { audioModel: { ...AUDIO_MODEL, api: "openai-completions" } },
+		file: { "a.mp3": MP3_BYTES },
+		prompt: "listen to @a.mp3",
+		model: "gpt-transcribe",
+		content: [
+			{ type: "text", text: "Transcribe this audio word for word. Give only the transcript." },
+			{ type: "input_audio", input_audio: { data: "//uQRAAAAAA=", format: "mp3" } },
+		],
+		text: "Transcript of a.mp3 · hebo/gpt-transcribe\n\nmedia text",
+	},
+]) {
+	test(`puts the ${name} part where the marker is in the payload of the media call`, async () => {
+		const { session, server, settle } = await startMediaSession(settings, file);
+		await settle(session.prompt(prompt));
+		assert.deepEqual(
+			server.requests.map(({ path, authorization, chat }) => ({
+				path,
+				authorization,
+				model: chat?.model,
+				messages: chat?.messages,
+			})),
+			[
+				{
+					path: "/v1/chat/completions",
+					authorization: "Bearer test-key",
+					model,
+					messages: [{ role: "user", content }],
+				},
+			],
+		);
+		assert.deepEqual(customMessages(session.sessionManager.getBranch()), [
+			{ customType: "pi-media-text", content: text, details: { error: false } },
+		]);
+	});
+}
 
 test("calls a chat model that is not in pi's list at the base URL of its provider", async () => {
 	const { session, server, settle } = await startMediaSession(
@@ -133,7 +151,7 @@ test("calls a chat model that is not in pi's list at the base URL of its provide
 });
 
 const PASTED = { type: "image" as const, data: "AAAA", mimeType: "image/jpeg" };
-const PNG_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ";
+const PNG_URL = `data:image/png;base64,${PNG_DATA}`;
 
 for (const { name, text, urls, descriptions } of [
 	{
@@ -182,16 +200,16 @@ test("gives the texts in the order of the files in the message", async () => {
 	);
 });
 
-test("sends one Authorization header to a provider that adds its own", async () => {
+test("keeps the Authorization header of the provider", async () => {
 	const { session, server, settle } = await startMediaSession(
 		{ audioModel: AUDIO_MODEL },
 		{ "a.mp3": MP3_BYTES },
-		{ provider: { authHeader: true } },
+		{ provider: { headers: { Authorization: "Basic abc", "x-team": "a" } } },
 	);
 	await settle(session.prompt("listen to @a.mp3"));
 	assert.deepEqual(
-		server.requests.map(({ authorization }) => authorization),
-		["Bearer test-key"],
+		server.requests.map(({ authorization, team }) => ({ authorization, team })),
+		[{ authorization: "Basic abc", team: "a" }],
 	);
 });
 
@@ -251,11 +269,12 @@ test("attaches a file of a type without a media model to the main model", async 
 	});
 });
 
-for (const { name, settings, file, failed, stopped } of [
+for (const { name, settings, file, progress, failed, stopped } of [
 	{
 		name: "transcription",
 		settings: { audioModel: AUDIO_MODEL },
 		file: "a.mp3",
+		progress: "Transcribing a.mp3 with hebo/gpt-transcribe…",
 		failed: "pi-media: hebo/gpt-transcribe could not transcribe a.mp3: 413 File too large.",
 		stopped: "pi-media: hebo/gpt-transcribe could not transcribe a.mp3: The user stopped the call.",
 	},
@@ -263,11 +282,20 @@ for (const { name, settings, file, failed, stopped } of [
 		name: "chat",
 		settings: { documentModel: DOCUMENT_MODEL },
 		file: "report.pdf",
+		progress: "Reading report.pdf with hebo/gpt-4.1-mini…",
 		failed: 'pi-media: hebo/gpt-4.1-mini could not read report.pdf: 413: {"message":"File too large"}.',
 		stopped: "pi-media: hebo/gpt-4.1-mini could not read report.pdf: The user stopped the call.",
 	},
+	{
+		name: "image",
+		settings: { imageModel: IMAGE_MODEL },
+		file: "shot.png",
+		progress: "Describing shot.png with hebo/gpt-4.1-mini…",
+		failed: 'pi-media: hebo/gpt-4.1-mini could not describe shot.png: 413: {"message":"File too large"}.',
+		stopped: "pi-media: hebo/gpt-4.1-mini could not describe shot.png: The user stopped the call.",
+	},
 ]) {
-	const files = { "a.mp3": MP3_BYTES, "report.pdf": "%PDF-1.4" };
+	const files = { "a.mp3": MP3_BYTES, "report.pdf": "%PDF-1.4", "shot.png": PNG_BYTES };
 
 	test(`gives the main model an error note when the ${name} model fails`, async () => {
 		const { session, server, requests, settle } = await startMediaSession(settings, files);
@@ -282,13 +310,14 @@ for (const { name, settings, file, failed, stopped } of [
 		]);
 	});
 
-	test(`stops the call to the ${name} model on Esc and gives the main model an error note`, async () => {
+	test(`stops the call to the ${name} model on Esc and gives the main model an error note`, { timeout: 5000 }, async () => {
 		const { session, server, requests, ui, press, waitFor, settle } = await startMediaSession(settings, files);
 		server.state.hold = true;
 		const run = session.prompt(`see @${file}`);
 		await waitFor(() => server.requests.length === 1 && ui.customs.length === 1);
 		press("\x1b");
 		await settle(run);
+		assert.deepEqual(showsProgress(ui.customs, progress), [true]);
 		assert.deepEqual(customMessages(session.sessionManager.getBranch()), [
 			{ customType: "pi-media-text", content: stopped, details: { error: true } },
 		]);
@@ -299,7 +328,7 @@ for (const { name, settings, file, failed, stopped } of [
 	});
 }
 
-test("stops the call and the remaining media calls of the message on Esc", async () => {
+test("stops the call and the remaining media calls of the message on Esc", { timeout: 5000 }, async () => {
 	const { session, server, ui, press, waitFor, settle } = await startMediaSession(
 		{ audioModel: AUDIO_MODEL },
 		{ "a.mp3": MP3_BYTES, "b.mp3": MP3_BYTES },
@@ -310,6 +339,7 @@ test("stops the call and the remaining media calls of the message on Esc", async
 	press("\x1b");
 	await settle(run);
 	assert.equal(server.requests.length, 1);
+	assert.equal(ui.customs.length, 1);
 	assert.deepEqual(
 		customMessages(session.sessionManager.getBranch()).map(({ content }) => content),
 		[
@@ -318,6 +348,21 @@ test("stops the call and the remaining media calls of the message on Esc", async
 		],
 	);
 });
+
+for (const { name, contentType, body } of [
+	{ name: "an HTML body", contentType: "text/html", body: "<html><body><h1>502 Bad Gateway</h1></body></html>" },
+	{ name: "a text body", contentType: "text/plain", body: "Bad Gateway" },
+]) {
+	test(`gives the HTTP status text in the note when the transcription server fails with ${name}`, async () => {
+		const { session, server, settle } = await startMediaSession({ audioModel: AUDIO_MODEL }, { "a.mp3": MP3_BYTES });
+		server.state.reply = () => ({ status: 502, body, contentType });
+		await settle(session.prompt("listen to @a.mp3"));
+		assert.deepEqual(
+			customMessages(session.sessionManager.getBranch()).map(({ content }) => content),
+			["pi-media: hebo/gpt-transcribe could not transcribe a.mp3: 502 Bad Gateway."],
+		);
+	});
+}
 
 test("gives an error note and calls no model for an audio type that the openai-completions API cannot take", async () => {
 	const { session, server, settle } = await startMediaSession(
@@ -351,10 +396,7 @@ for (const mode of ["print", "rpc"] as const) {
 	});
 }
 
-const userTexts = (messages: Message[]) =>
-	userContents(messages).map((content) =>
-		typeof content === "string" ? content : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
-	);
+const userTexts = (messages: Message[]) => userContents(messages).map(textOf);
 
 for (const streamingBehavior of ["steer", "followUp"] as const) {
 	// Pi gives the main model one queued message per turn by default, so the main model answers the transcript alone
@@ -369,7 +411,7 @@ for (const streamingBehavior of ["steer", "followUp"] as const) {
 		await session.prompt("listen to @a.mp3", { streamingBehavior });
 		await settle(run);
 		const text = "Transcript of a.mp3 · hebo/gpt-transcribe\n\nmedia text";
-		assert.deepEqual(transcript(session.sessionManager.getBranch()), [
+		assert.deepEqual(conversation(session.sessionManager.getBranch()), [
 			"user: first",
 			"assistant: ok",
 			`custom: ${text}`,

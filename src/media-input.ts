@@ -17,9 +17,7 @@ function readShowingLoader(file: Attachment, model: MediaModelSetting, ctx: Exte
 	});
 }
 
-// Sends each file of a type with a media model to that model, one after the other, and gives its text or error note to
-// `send`. Gives back the other files. Esc stops the call and the calls for the files after it. The settings are read
-// here, so a changed setting applies from the next message.
+// Esc stops the current call and the calls for the files after it.
 export async function readWithMediaModels(
 	files: Attachment[],
 	settings: Settings,

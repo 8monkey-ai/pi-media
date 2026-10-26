@@ -58,7 +58,6 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 type CustomFactory = Parameters<ExtensionUIContext["custom"]>[0];
 type CustomComponent = Awaited<ReturnType<CustomFactory>>;
 
-// The visible text of a component, without colors, borders and empty lines.
 const visibleLines = (component: CustomComponent) =>
 	component
 		.render(80)

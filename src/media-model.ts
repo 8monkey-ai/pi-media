@@ -44,24 +44,23 @@ export const progressText = (file: Attachment, model: MediaModelSetting) =>
 	`${KINDS[model.kind].progress} ${basename(file.path)} with ${modelName(model)}…`;
 
 // Node's `fetch` gives the cause of a network failure, such as a timeout, only in `cause`.
-function reasonOf(error: unknown, signal: AbortSignal | undefined) {
-	if (signal?.aborted) return "The user stopped the call.";
+function reasonOf(error: unknown, signal: AbortSignal) {
+	if (signal.aborted) return "The user stopped the call.";
 	const { message, cause } = error instanceof Error ? error : new Error(String(error));
 	const reason = cause instanceof Error ? `${message}: ${cause.message}` : message;
 	return /[.!?]$/.test(reason) ? reason : `${reason}.`;
 }
 
-// A signal that is aborted already gives the note that the user stopped the call, and calls no model.
 export async function readWithMediaModel(
 	file: Attachment,
 	model: MediaModelSetting,
 	registry: ExtensionContext["modelRegistry"],
-	signal: AbortSignal | undefined,
+	signal: AbortSignal,
 ) {
 	const { instruction, verb, heading } = KINDS[model.kind];
 	const name = basename(file.path);
 	try {
-		signal?.throwIfAborted();
+		signal.throwIfAborted();
 		const call = { file, provider: model.provider, id: model.id, instruction, signal };
 		const text = await mediaApi(model.api).read(call, registry);
 		if (text.trim() === "") throw new Error("the model gave no text");
