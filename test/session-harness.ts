@@ -13,6 +13,7 @@ import {
 	createAgentSession,
 	DefaultResourceLoader,
 	type ExtensionFactory,
+	type ExtensionUIContext,
 	type InputEvent,
 	ModelRuntime,
 	SessionManager,
@@ -49,7 +50,23 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 	}
 }
 
+function recordingUI() {
+	const notifications: Array<{ message: string; type?: string }> = [];
+	const statuses: Record<string, string | undefined> = {};
+	// pi copies this object into the UI context of each extension, and only these members exist.
+	const uiContext = {
+		notify: (message, type) => {
+			notifications.push({ message, type });
+		},
+		setStatus: (key, text) => {
+			statuses[key] = text;
+		},
+	} as ExtensionUIContext;
+	return { notifications, statuses, uiContext };
+}
+
 // Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
+// Binding the recording UI emits `session_start`, as pi does at startup.
 // A model call waits until `settle` runs, so a test can queue input while pi streams.
 // `files` go into the working directory, which is also the agent directory.
 // `api` is the API of the model. Its default, Chat Completions, is the shape of the default payload.
@@ -104,6 +121,8 @@ export async function startSession(
 		sessionManager: sessionManager?.(dir) ?? SessionManager.inMemory(dir),
 		tools,
 	});
+	const { uiContext, ...ui } = recordingUI();
+	await session.bindExtensions({ uiContext });
 
 	async function waitForCall() {
 		while (gates.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
@@ -122,7 +141,7 @@ export async function startSession(
 		}
 	}
 
-	return { session, dir, requests, waitForCall, settle };
+	return { session, dir, requests, ui, waitForCall, settle };
 }
 
 // Runs after pi-media and records the input that pi-media passes on.

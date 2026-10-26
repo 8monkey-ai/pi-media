@@ -13,9 +13,11 @@ function kindName(mimeType: string) {
 // The bytes of an audio, video or PDF file go in `details`, which pi stores in the session as JSON,
 // so the bytes follow the branch.
 // `autoResizeImages` is a function so that a changed pi setting applies on the next read.
+// While `readsMedia` gives false, the tool reads every file as pi's read tool does.
 export function createMediaReadTool(
 	autoResizeImages: () => boolean | undefined,
 	maxBytes: number,
+	readsMedia: () => boolean,
 ): ToolDefinition<PiReadTool["parameters"], ReadDetails> {
 	// Only the name, schema, prompt text and renderers come from this definition. `execute` uses the cwd of the session.
 	const piRead = createReadToolDefinition(process.cwd());
@@ -24,7 +26,7 @@ export function createMediaReadTool(
 		description: `${piRead.description} Also reads audio, video and PDF files.`,
 		async execute(...args) {
 			const [, { path }, , , ctx] = args;
-			const file = await findMediaFile(path, ctx.cwd);
+			const file = readsMedia() ? await findMediaFile(path, ctx.cwd) : undefined;
 			if (!file || file.image) {
 				return createReadToolDefinition(ctx.cwd, { autoResizeImages: autoResizeImages() }).execute(...args);
 			}

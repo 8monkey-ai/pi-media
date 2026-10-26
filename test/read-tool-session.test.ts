@@ -127,3 +127,17 @@ test("sends a model that needs an assistant message after tool results the PDF f
 		],
 	});
 });
+
+test("reads a PDF as pi's read tool does when a media model has a provider that pi does not know", async () => {
+	const { session, settle } = await startSession([extension], {
+		files: {
+			"pi-media.json": '{"documentModel": {"provider": "nope", "id": "gpt-4.1", "api": "openai-completions"}}',
+			"report.pdf": "%PDF-1.4",
+		},
+		tools: ["read"],
+		reply: readThenAnswer("report.pdf"),
+	});
+	await settle(session.prompt("summarize report.pdf"));
+	const { content, details } = toolResultEntries(session.sessionManager.getBranch())[0].message;
+	assert.deepEqual({ content, details }, { content: [{ type: "text", text: "%PDF-1.4" }], details: undefined });
+});

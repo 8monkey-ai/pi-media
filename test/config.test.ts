@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { readMaxAttachmentBytes } from "../src/config.ts";
+import { readSettings } from "../src/config.ts";
 import extension from "../src/index.ts";
 import { startSession } from "./session-harness.ts";
 
@@ -24,46 +24,101 @@ async function writeConfig(content: string) {
 	await writeFile(join(agentDir, "pi-media.json"), content);
 }
 
-test("uses 20 MB when the config file is missing", () => {
-	assert.equal(readMaxAttachmentBytes(), 20971520);
+const configPath = () => join(agentDir, "pi-media.json");
+
+test("uses 20 MB and no media models when the config file is missing", () => {
+	assert.deepEqual(readSettings(), { path: configPath(), settings: { maxAttachmentBytes: 20971520 } });
 });
 
 test("uses 20 MB when the config file has no maxAttachmentBytes and ignores other keys", async () => {
 	await writeConfig('{"other": true}');
-	assert.equal(readMaxAttachmentBytes(), 20971520);
+	assert.equal(readSettings().settings.maxAttachmentBytes, 20971520);
 });
 
-test("reads maxAttachmentBytes from pi-media.json in the agent directory", async () => {
-	await writeConfig('{"maxAttachmentBytes": 1048576}');
-	assert.equal(readMaxAttachmentBytes(), 1048576);
+test("reads maxAttachmentBytes and the media models from pi-media.json in the agent directory", async () => {
+	await writeConfig(
+		JSON.stringify({
+			maxAttachmentBytes: 1048576,
+			imageModel: { provider: "hebo", id: "gpt-4.1-mini", api: "openai-completions" },
+			audioModel: { provider: "hebo", id: "gpt-transcribe", api: "openai-transcriptions" },
+			documentModel: { provider: "hebo", id: "gpt-4.1", api: "openai-completions" },
+		}),
+	);
+	assert.deepEqual(readSettings().settings, {
+		maxAttachmentBytes: 1048576,
+		imageModel: { provider: "hebo", id: "gpt-4.1-mini", api: "openai-completions" },
+		audioModel: { provider: "hebo", id: "gpt-transcribe", api: "openai-transcriptions" },
+		documentModel: { provider: "hebo", id: "gpt-4.1", api: "openai-completions" },
+	});
 });
 
 test("fails when the config path exists but cannot be read as a file", async () => {
-	await mkdir(join(agentDir, "pi-media.json"));
-	assert.throws(() => readMaxAttachmentBytes(), { code: "EISDIR" });
+	await mkdir(configPath());
+	assert.throws(() => readSettings(), { code: "EISDIR" });
 });
 
 test("fails with the file path when the config file is not valid JSON", async () => {
 	await writeConfig("{maxAttachmentBytes: 5}");
-	assert.throws(() => readMaxAttachmentBytes(), {
-		message: new RegExp(`^pi-media: ${join(agentDir, "pi-media.json")} is not valid JSON: `),
+	assert.throws(() => readSettings(), {
+		message: new RegExp(`^pi-media: ${configPath()} is not valid JSON: `),
 	});
 });
 
 test("fails with the file path when the config file does not hold a JSON object", async () => {
 	for (const content of ["null", "[]", "5"]) {
 		await writeConfig(content);
-		assert.throws(() => readMaxAttachmentBytes(), {
-			message: `pi-media: ${join(agentDir, "pi-media.json")} must hold a JSON object`,
-		});
+		assert.throws(() => readSettings(), { message: `pi-media: ${configPath()} must hold a JSON object` });
 	}
 });
 
-test("fails with the file path when maxAttachmentBytes is not a positive integer", async () => {
-	for (const value of ["0", "-1", "1.5", '"20MB"', "null"]) {
+test("fails with the setting and the file path when maxAttachmentBytes is not a positive integer", async () => {
+	for (const [value, rule] of [
+		["0", "must be >= 1"],
+		["-1", "must be >= 1"],
+		["1.5", "must be integer"],
+		['"20MB"', "must be integer"],
+		["null", "must be integer"],
+	]) {
 		await writeConfig(`{"maxAttachmentBytes": ${value}}`);
-		assert.throws(() => readMaxAttachmentBytes(), {
-			message: `pi-media: maxAttachmentBytes in ${join(agentDir, "pi-media.json")} must be a positive integer, got ${value}`,
+		assert.throws(() => readSettings(), { message: `pi-media: maxAttachmentBytes in ${configPath()} ${rule}, got ${value}` });
+	}
+});
+
+test("fails with the setting and the file path when a media model has no provider, id or api", async () => {
+	for (const [model, missing] of [
+		['{"provider": "hebo", "id": "gpt-transcribe"}', '"api"'],
+		['{"provider": "hebo"}', '"id", "api"'],
+		["{}", '"provider", "id", "api"'],
+	]) {
+		await writeConfig(`{"audioModel": ${model}}`);
+		assert.throws(() => readSettings(), { message: `pi-media: audioModel in ${configPath()} has no ${missing}` });
+	}
+});
+
+test("fails with the setting and the file path when a media model has a value of the wrong type", async () => {
+	for (const [model, field, rule] of [
+		[
+			'{"provider": "hebo", "id": "gpt-4.1", "api": "openai-responses"}',
+			"imageModel.api",
+			'must be "openai-completions" or "openai-transcriptions", got "openai-responses"',
+		],
+		['{"provider": 5, "id": "gpt-4.1", "api": "openai-completions"}', "imageModel.provider", "must be string, got 5"],
+		['"hebo/gpt-4.1"', "imageModel", 'must be object, got "hebo/gpt-4.1"'],
+		["null", "imageModel", "must be object, got null"],
+	]) {
+		await writeConfig(`{"imageModel": ${model}}`);
+		assert.throws(() => readSettings(), { message: `pi-media: ${field} in ${configPath()} ${rule}` });
+	}
+});
+
+test("fails with the setting and the file path when a media model has an empty provider or id", async () => {
+	for (const [model, field] of [
+		['{"provider": "", "id": "gpt-4.1", "api": "openai-completions"}', "documentModel.provider"],
+		['{"provider": "hebo", "id": "", "api": "openai-completions"}', "documentModel.id"],
+	]) {
+		await writeConfig(`{"documentModel": ${model}}`);
+		assert.throws(() => readSettings(), {
+			message: `pi-media: ${field} in ${configPath()} must not have fewer than 1 characters, got ""`,
 		});
 	}
 });
