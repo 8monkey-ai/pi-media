@@ -36,7 +36,10 @@ function kindOf(mimeType: string) {
 	return mimeType === "application/pdf" ? "document" : undefined;
 }
 
-const modelName = ({ provider, id }: MediaModel) => `${provider}/${id}`;
+export const modelName = ({ provider, id }: MediaModel) => `${provider}/${id}`;
+
+export const mediaModelFor = (settings: Settings, mimeType: string) =>
+	mediaModels(settings).find(({ kind }) => kind === kindOf(mimeType));
 
 // Node's `fetch` gives the cause of a network failure, such as a timeout, only in `cause`.
 function reasonOf(error: unknown, signal: AbortSignal) {
@@ -46,7 +49,7 @@ function reasonOf(error: unknown, signal: AbortSignal) {
 	return /[.!?]$/.test(reason) ? reason : `${reason}.`;
 }
 
-async function readWithMediaModel(file: Attachment, model: MediaModel, registry: ModelRegistry, signal: AbortSignal) {
+export async function readWithMediaModel(file: Attachment, model: MediaModel, registry: ModelRegistry, signal: AbortSignal) {
 	const { instruction, verb, heading } = KINDS[model.kind];
 	const name = basename(file.path);
 	try {
@@ -87,7 +90,7 @@ export async function readWithMediaModels(
 	const stop = new AbortController();
 	const others: Attachment[] = [];
 	for (const file of files) {
-		const model = mediaModels(settings).find(({ kind }) => kind === kindOf(file.mimeType));
+		const model = mediaModelFor(settings, file.mimeType);
 		if (model) send(await readShowingLoader(file, model, ctx, stop));
 		else others.push(file);
 	}

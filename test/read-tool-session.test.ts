@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fauxAssistantMessage, fauxToolCall, type Message } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import extension from "../src/index.ts";
-import { MOV_BYTES } from "./fixtures.ts";
+import { AUDIO_MODEL, CHAT_MODEL, MOV_BYTES, MP3_BYTES, PNG_BYTES } from "./fixtures.ts";
+import { startMediaServer } from "./media-server.ts";
 import { startSession } from "./session-harness.ts";
 
 // The model reads the file with the read tool, then answers.
@@ -25,21 +26,32 @@ function userAndToolPayload(messages: Message[]) {
 	};
 }
 
-async function startReadSession(api: string, name: string, bytes: string | Buffer) {
-	const started = await startSession([extension], {
-		files: { [name]: bytes },
+const servers: Array<() => void> = [];
+after(() => {
+	for (const close of servers) close();
+});
+
+// `read` sends the prompt that makes the model read `name`, and `result` gives the first tool result.
+async function startReadSession(name: string, { api, settings = {} }: { api?: string; settings?: Record<string, unknown> } = {}) {
+	const server = await startMediaServer();
+	servers.push(server.close);
+	const files = { "a.mp3": MP3_BYTES, "shot.png": PNG_BYTES, "report.pdf": "%PDF-1.4", "clip.mov": MOV_BYTES };
+	const started = await startSession([server.provider, extension], {
+		files: { "pi-media.json": JSON.stringify(settings), ...files },
 		api,
 		tools: ["read"],
 		reply: readThenAnswer(name),
 		payload: userAndToolPayload,
 	});
-	await started.settle(started.session.prompt(`summarize ${name}`));
-	return started;
+	const read = () => started.settle(started.session.prompt(`summarize ${name}`));
+	const result = () => {
+		const { content, details } = toolResultEntries(started.session.sessionManager.getBranch())[0].message;
+		return { content, details };
+	};
+	return { ...started, server, read, result };
 }
 
 const NOT_IN_REQUEST = "[The API of the current model cannot take this file type. The file content is not in this request.]";
-
-const readPdf = (api: string) => startReadSession(api, "report.pdf", "%PDF-1.4");
 
 function toolResultEntries(branch: SessionEntry[]) {
 	return branch.flatMap((entry) =>
@@ -52,7 +64,8 @@ function toolResultContents(messages: Message[]) {
 }
 
 test("stores the PDF bytes in the tool result details, marks the request copy, and the payload carries the file after the tool message", async () => {
-	const { session, dir, requests } = await readPdf("openai-completions");
+	const { session, dir, requests, read } = await startReadSession("report.pdf");
+	await read();
 	const [entry] = toolResultEntries(session.sessionManager.getBranch());
 	const note = `Read PDF file [application/pdf]: ${join(dir, "report.pdf")}`;
 	assert.deepEqual(toolResultContents(requests[1].messages), [
@@ -85,13 +98,14 @@ test("stores the PDF bytes in the tool result details, marks the request copy, a
 });
 
 // Only Chat Completions takes files, and it does not take QuickTime video.
-for (const [api, name, bytes, kind] of [
-	["mistral-conversations", "report.pdf", "%PDF-1.4", "PDF file [application/pdf]"],
-	["openai-responses", "report.pdf", "%PDF-1.4", "PDF file [application/pdf]"],
-	["openai-completions", "clip.mov", MOV_BYTES, "video file [video/quicktime]"],
+for (const [api, name, kind] of [
+	["mistral-conversations", "report.pdf", "PDF file [application/pdf]"],
+	["openai-responses", "report.pdf", "PDF file [application/pdf]"],
+	["openai-completions", "clip.mov", "video file [video/quicktime]"],
 ] as const) {
 	test(`tells a model with the ${api} API that ${name} is not in the request`, async () => {
-		const { dir, requests } = await startReadSession(api, name, bytes);
+		const { dir, requests, read } = await startReadSession(name, { api });
+		await read();
 		assert.deepEqual(toolResultContents(requests[1].messages), [
 			[
 				{ type: "text", text: `Read ${kind}: ${join(dir, name)}` },
@@ -140,4 +154,67 @@ test("reads a PDF as pi's read tool does when a media model has a provider that 
 	await settle(session.prompt("summarize report.pdf"));
 	const { content, details } = toolResultEntries(session.sessionManager.getBranch())[0].message;
 	assert.deepEqual({ content, details }, { content: [{ type: "text", text: "%PDF-1.4" }], details: undefined });
+});
+
+for (const [name, settings, model, text] of [
+	["a.mp3", { audioModel: AUDIO_MODEL }, "hebo/gpt-transcribe", "Transcript of a.mp3 · hebo/gpt-transcribe\n\nmedia text"],
+	["shot.png", { imageModel: CHAT_MODEL }, "hebo/gpt-4.1-mini", "Description of shot.png · hebo/gpt-4.1-mini\n\nmedia text"],
+] as const) {
+	test(`reads ${name} through the media model and gives the main model the text in place of the file`, async () => {
+		const { dir, server, requests, read, result } = await startReadSession(name, { settings });
+		await read();
+		assert.equal(server.requests.length, 1);
+		assert.deepEqual(result(), { content: [{ type: "text", text }], details: { model, path: join(dir, name) } });
+		assert.deepEqual(requests[1].payload, {
+			messages: [
+				{ role: "user", content: [{ type: "text", text: `summarize ${name}` }] },
+				{ role: "tool", content: text, tool_call_id: "call-1" },
+			],
+		});
+	});
+}
+
+test("gives the error note of the media model in the tool result", async () => {
+	const { dir, server, read, result } = await startReadSession("a.mp3", { settings: { audioModel: AUDIO_MODEL } });
+	server.state.reply = { status: 413, body: JSON.stringify({ error: { message: "File too large" } }) };
+	await read();
+	assert.deepEqual(result(), {
+		content: [{ type: "text", text: "pi-media: hebo/gpt-transcribe could not transcribe a.mp3: 413 File too large." }],
+		details: { model: "hebo/gpt-transcribe", path: join(dir, "a.mp3") },
+	});
+});
+
+test("stops the media call of the read tool when pi aborts", { timeout: 5000 }, async () => {
+	const { session, server, waitFor, read, result } = await startReadSession("a.mp3", { settings: { audioModel: AUDIO_MODEL } });
+	server.state.hold = true;
+	const reading = read();
+	await waitFor(() => server.requests.length === 1);
+	await session.abort();
+	await reading;
+	assert.deepEqual(result().content, [
+		{ type: "text", text: "pi-media: hebo/gpt-transcribe could not transcribe a.mp3: The user stopped the call." },
+	]);
+});
+
+for (const [name, settings, kind] of [
+	["a.mp3", { audioModel: AUDIO_MODEL }, "audio file [audio/mpeg]"],
+	["shot.png", { imageModel: CHAT_MODEL }, "image file [image/png]"],
+] as const) {
+	test(`calls no media model for ${name} when it is larger than maxAttachmentBytes`, async () => {
+		const { dir, server, read, result } = await startReadSession(name, { settings: { ...settings, maxAttachmentBytes: 7 } });
+		await read();
+		assert.deepEqual(server.requests, []);
+		const text = `${kind} is larger than the pi-media limit maxAttachmentBytes (7 bytes): ${join(dir, name)}`;
+		assert.deepEqual(result(), { content: [{ type: "text", text }], details: undefined });
+	});
+}
+
+test("reads a PDF into details when only an audio model is set", async () => {
+	const { dir, server, read, result } = await startReadSession("report.pdf", { settings: { audioModel: AUDIO_MODEL } });
+	await read();
+	assert.deepEqual(server.requests, []);
+	assert.deepEqual(result(), {
+		content: [{ type: "text", text: `Read PDF file [application/pdf]: ${join(dir, "report.pdf")}` }],
+		details: { path: join(dir, "report.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" },
+	});
 });

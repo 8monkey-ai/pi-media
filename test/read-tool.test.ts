@@ -15,7 +15,7 @@ type ReadParams = { path: string; offset?: number; limit?: number };
 async function readWithMedia(dir: string, params: ReadParams, autoResizeImages?: boolean) {
 	return createMediaReadTool(
 		() => autoResizeImages,
-		20971520,
+		{ maxAttachmentBytes: 20971520 },
 		() => true,
 	).execute("call-1", params, undefined, undefined, context(dir));
 }
@@ -74,7 +74,7 @@ test("tells the model that the tool also reads audio, video and PDF files", () =
 	assert.match(
 		createMediaReadTool(
 			() => undefined,
-			20971520,
+			{ maxAttachmentBytes: 20971520 },
 			() => true,
 		).description,
 		/Also reads audio, video and PDF files\./,
@@ -86,7 +86,7 @@ test("returns a note without the bytes for a media file larger than the size cap
 	const read = (path: string) =>
 		createMediaReadTool(
 			() => undefined,
-			8,
+			{ maxAttachmentBytes: 8 },
 			() => true,
 		).execute("call-1", { path }, undefined, undefined, context(dir));
 	assert.deepEqual(await read("report.pdf"), {
