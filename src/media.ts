@@ -1,11 +1,9 @@
 import { readFile, stat } from "node:fs/promises";
-import { detectSupportedImageMimeTypeFromFile, type InputEvent } from "@earendil-works/pi-coding-agent";
+import { detectSupportedImageMimeTypeFromFile } from "@earendil-works/pi-coding-agent";
 import { fileTypeFromFile } from "file-type";
 import { findPathCandidates } from "./find-paths.ts";
 import type { Attachment } from "./media-entry.ts";
 import { resolveLikePiRead } from "./resolve-path.ts";
-
-type ImageContent = NonNullable<InputEvent["images"]>[number];
 
 function isMediaType(mimeType: string) {
 	return mimeType.startsWith("audio/") || mimeType.startsWith("video/") || mimeType === "application/pdf";
@@ -42,11 +40,11 @@ export async function readAttachment(path: string, mimeType: string) {
 	return { path, mimeType, data: (await readFile(path)).toString("base64") };
 }
 
+// Gives the files in the order of their mentions in the text.
 export async function findLocalMedia(text: string, cwd: string, maxBytes: number) {
 	let attachedEnd = 0;
 	const attachedPaths = new Set<string>();
-	const images: ImageContent[] = [];
-	const attachments: Attachment[] = [];
+	const files: Attachment[] = [];
 	for (const { start, end, path } of findPathCandidates(text)) {
 		if (start < attachedEnd) continue;
 		const file = await findMediaFile(path, cwd);
@@ -59,8 +57,7 @@ export async function findLocalMedia(text: string, cwd: string, maxBytes: number
 		if (!attachment) continue;
 		attachedEnd = end;
 		attachedPaths.add(file.path);
-		if (file.image) images.push({ type: "image", data: attachment.data, mimeType: attachment.mimeType });
-		else attachments.push(attachment);
+		files.push(attachment);
 	}
-	return { images, attachments };
+	return files;
 }

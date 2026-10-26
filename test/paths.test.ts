@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import { findPathCandidates } from "../src/find-paths.ts";
-import { findMedia, fixtureDir, MP3_BYTES, NOTHING, PNG_BYTES, PNG_IMAGE } from "./fixtures.ts";
+import { findMedia, fixtureDir, MP3_BYTES, PNG_BYTES, PNG_DATA } from "./fixtures.ts";
 
 const dir = await fixtureDir({
 	"shot.png": PNG_BYTES,
@@ -23,13 +23,10 @@ const dir = await fixtureDir({
 await mkdir(join(dir, "sub"));
 
 const pdf = (name: string) => ({ path: join(dir, name), mimeType: "application/pdf", data: "JVBERi0xLjQ=" });
+const png = (name: string) => ({ path: join(dir, name), mimeType: "image/png", data: PNG_DATA });
 const myFile = pdf("My File.pdf");
 const report = pdf("report.pdf");
 const clip = { path: join(dir, "clip.mp3"), mimeType: "audio/mpeg", data: "//uQRAAAAAA=" };
-
-function only(...attachments: unknown[]) {
-	return { images: [], attachments };
-}
 
 // Sets the environment variables and returns a function that restores them. The restore deletes a variable that was not
 // set, because process.env stores undefined as the string "undefined".
@@ -68,88 +65,85 @@ const candidates = (text: string, platform: NodeJS.Platform, tempDir?: string) =
 	onPlatform(platform, () => findPathCandidates(text), tempDir);
 
 test("attaches a bare absolute image path", async () => {
-	assert.deepEqual(await findMedia(`${dir}/shot.png what is this?`, "/"), {
-		images: [PNG_IMAGE],
-		attachments: [],
-	});
+	assert.deepEqual(await findMedia(`${dir}/shot.png what is this?`, "/"), [png("shot.png")]);
 });
 
 test("attaches a path with backslash escapes", async () => {
-	assert.deepEqual(await findMedia(`see ${dir}/My\\ File.pdf now`, "/"), only(myFile));
+	assert.deepEqual(await findMedia(`see ${dir}/My\\ File.pdf now`, "/"), [myFile]);
 });
 
 test("attaches a single-quoted path, including a quote written as '\\''", async () => {
-	assert.deepEqual(await findMedia(`see '${dir}/My File.pdf' now`, "/"), only(myFile));
-	assert.deepEqual(await findMedia(`'${dir}/it'\\''s.pdf'`, "/"), only(pdf("it's.pdf")));
+	assert.deepEqual(await findMedia(`see '${dir}/My File.pdf' now`, "/"), [myFile]);
+	assert.deepEqual(await findMedia(`'${dir}/it'\\''s.pdf'`, "/"), [pdf("it's.pdf")]);
 });
 
 test("attaches a double-quoted path, including escaped quotes in it", async () => {
-	assert.deepEqual(await findMedia(`see "${dir}/My File.pdf" now`, "/"), only(myFile));
-	assert.deepEqual(await findMedia(`"${dir}/say \\"hi\\".pdf"`, "/"), only(pdf('say "hi".pdf')));
+	assert.deepEqual(await findMedia(`see "${dir}/My File.pdf" now`, "/"), [myFile]);
+	assert.deepEqual(await findMedia(`"${dir}/say \\"hi\\".pdf"`, "/"), [pdf('say "hi".pdf')]);
 });
 
 test("attaches a percent-encoded file URI", async () => {
-	assert.deepEqual(await findMedia(`see file://${dir}/My%20File.pdf now`, "/"), only(myFile));
+	assert.deepEqual(await findMedia(`see file://${dir}/My%20File.pdf now`, "/"), [myFile]);
 });
 
 test("attaches several paths on separate lines and separated by spaces", async () => {
-	assert.deepEqual(await findMedia(`${dir}/shot.png\n${dir}/My\\ File.pdf\n'${dir}/clip.mp3'`, "/"), {
-		images: [PNG_IMAGE],
-		attachments: [myFile, clip],
-	});
-	assert.deepEqual(await findMedia(`${dir}/report.pdf ${dir}/clip.mp3 `, "/"), only(report, clip));
+	assert.deepEqual(await findMedia(`${dir}/shot.png\n${dir}/My\\ File.pdf\n'${dir}/clip.mp3'`, "/"), [
+		png("shot.png"),
+		myFile,
+		clip,
+	]);
+	assert.deepEqual(await findMedia(`${dir}/report.pdf ${dir}/clip.mp3 `, "/"), [report, clip]);
 });
 
 test("attaches pasted paths with spaces, one per line, without quotes or backslashes", async () => {
-	assert.deepEqual(await findMedia(`${dir}/My Shot.png\n${dir}/My File.pdf`, "/"), {
-		images: [PNG_IMAGE],
-		attachments: [myFile],
-	});
-	assert.deepEqual(await findMedia(`  @${dir}/My File.pdf \nwhat is this?`, "/"), only(myFile));
-	assert.deepEqual(await findMedia(`see @clip.mp3\n${dir}/My File.pdf`, dir), only(clip, myFile));
+	assert.deepEqual(await findMedia(`${dir}/My Shot.png\n${dir}/My File.pdf`, "/"), [png("My Shot.png"), myFile]);
+	assert.deepEqual(await findMedia(`  @${dir}/My File.pdf \nwhat is this?`, "/"), [myFile]);
+	assert.deepEqual(await findMedia(`see @clip.mp3\n${dir}/My File.pdf`, dir), [clip, myFile]);
 });
 
 test("attaches only the whole-line path when a shorter path at the same start also names a file", async () => {
 	const clip2 = { path: join(dir, "clip.mp3 2.mp3"), mimeType: "audio/mpeg", data: "//uQRAAAAAA=" };
-	assert.deepEqual(await findMedia(`${dir}/clip.mp3 2.mp3`, "/"), only(clip2));
+	assert.deepEqual(await findMedia(`${dir}/clip.mp3 2.mp3`, "/"), [clip2]);
 });
 
 test("finds a path with spaces only when it fills the whole line", async () => {
-	assert.deepEqual(await findMedia(`see ${dir}/My File.pdf`, "/"), NOTHING);
-	assert.deepEqual(await findMedia(`${dir}/report.pdf and more`, "/"), only(report));
+	assert.deepEqual(await findMedia(`see ${dir}/My File.pdf`, "/"), []);
+	assert.deepEqual(await findMedia(`${dir}/report.pdf and more`, "/"), [report]);
 });
 
 test("resolves ./ and ../ against the working directory", async () => {
-	assert.deepEqual(await findMedia("see ./report.pdf", dir), only(report));
-	assert.deepEqual(await findMedia("see ../report.pdf", join(dir, "sub")), only(report));
+	assert.deepEqual(await findMedia("see ./report.pdf", dir), [report]);
+	assert.deepEqual(await findMedia("see ../report.pdf", join(dir, "sub")), [report]);
 });
 
 test("resolves ~/ against the home directory", async (t) => {
 	setHome(t, dir);
-	assert.deepEqual(await findMedia("see ~/report.pdf", "/"), only(report));
+	assert.deepEqual(await findMedia("see ~/report.pdf", "/"), [report]);
 });
 
 test("keeps trailing punctuation and brackets outside a bare path", async () => {
-	assert.deepEqual(await findMedia(`what is ${dir}/report.pdf?`, "/"), only(report));
-	assert.deepEqual(await findMedia(`see (${dir}/report.pdf), ['${dir}/clip.mp3'].`, "/"), only(report, clip));
+	assert.deepEqual(await findMedia(`what is ${dir}/report.pdf?`, "/"), [report]);
+	assert.deepEqual(await findMedia(`see (${dir}/report.pdf), ['${dir}/clip.mp3'].`, "/"), [report, clip]);
 });
 
 test("finds a macOS screenshot with a narrow no-break space before AM", async () => {
 	const screenshot = pdf("Screenshot 2024-01-01 at 10.00.00\u202FAM.pdf");
-	assert.deepEqual(await findMedia(`'${dir}/Screenshot 2024-01-01 at 10.00.00 AM.pdf'`, "/"), only(screenshot));
-	assert.deepEqual(await findMedia(`${dir}/Screenshot\\ 2024-01-01\\ at\\ 10.00.00\u202FAM.pdf`, "/"), only(screenshot));
+	assert.deepEqual(await findMedia(`'${dir}/Screenshot 2024-01-01 at 10.00.00 AM.pdf'`, "/"), [screenshot]);
+	assert.deepEqual(await findMedia(`${dir}/Screenshot\\ 2024-01-01\\ at\\ 10.00.00\u202FAM.pdf`, "/"), [screenshot]);
 });
 
 test("finds a file with a space where the typed path has a no-break space", async () => {
-	assert.deepEqual(await findMedia(`${dir}/My\u00A0File.pdf`, "/"), only(myFile));
+	assert.deepEqual(await findMedia(`${dir}/My\u00A0File.pdf`, "/"), [myFile]);
 });
 
 // The decomposed case can fail only on a file system that keeps NFC and NFD names apart, such as Linux, not on APFS.
+// APFS finds the file under the composed name and Linux under the decomposed name, so the test compares composed paths.
 test("finds decomposed and curly-quote file names typed in composed form with a straight quote", async () => {
-	const image = { images: [PNG_IMAGE], attachments: [] };
-	assert.deepEqual(await findMedia(`${dir}/Caf\u00e9.png`, "/"), image);
-	assert.deepEqual(await findMedia(`${dir}/don\\'t.png`, "/"), image);
-	assert.deepEqual(await findMedia(`${dir}/Capture\\ d\\'\u00e9cran.png`, "/"), image);
+	const findComposed = async (text: string) =>
+		(await findMedia(text, "/")).map((file) => ({ ...file, path: file.path.normalize("NFC") }));
+	assert.deepEqual(await findComposed(`${dir}/Caf\u00e9.png`), [png("Caf\u00e9.png")]);
+	assert.deepEqual(await findComposed(`${dir}/don\\'t.png`), [png("don\u2019t.png")]);
+	assert.deepEqual(await findComposed(`${dir}/Capture\\ d\\'\u00e9cran.png`), [png("Capture d\u2019\u00e9cran.png")]);
 });
 
 test("leaves directories, paths inside a word or URL, and file URIs with a host as text", async () => {
@@ -160,7 +154,7 @@ test("leaves directories, paths inside a word or URL, and file URIs with a host 
 		`'${dir}/report.pdf`,
 		"file://server/a.pdf",
 	]) {
-		assert.deepEqual(await findMedia(text, "/"), NOTHING);
+		assert.deepEqual(await findMedia(text, "/"), []);
 	}
 });
 

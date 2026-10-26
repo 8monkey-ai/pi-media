@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import extension from "../src/index.ts";
-import { MP3_BYTES, MP3_PART, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
+import { MP3_BYTES, MP3_PART, PNG_BYTES, PNG_DATA, WAV_BYTES } from "./fixtures.ts";
 import { inputObserver, startSession } from "./session-harness.ts";
 
 test("stores a PDF in a pi-media entry and keeps the typed text in the user message", async () => {
@@ -105,7 +105,9 @@ test("passes mentioned images to pi after the images already in the input and ke
 	const { session, settle } = await startSession([extension, observer], { files: { "shot.png": PNG_BYTES } });
 	const existing = { type: "image" as const, data: "AAAA", mimeType: "image/jpeg" };
 	await settle(session.prompt("see @shot.png", { images: [existing] }));
-	assert.deepEqual(inputs, [{ text: "see @shot.png", images: [existing, PNG_IMAGE] }]);
+	assert.deepEqual(inputs, [
+		{ text: "see @shot.png", images: [existing, { type: "image", data: PNG_DATA, mimeType: "image/png" }] },
+	]);
 	assert.deepEqual(
 		session.sessionManager.getBranch().filter((entry) => entry.type === "custom"),
 		[],
@@ -131,6 +133,7 @@ test("shows the media models in the footer in the order image, audio, document",
 	assert.deepEqual(ui, {
 		notifications: [],
 		statuses: { "pi-media": "media: image faux/gpt-4.1-mini, audio faux/gpt-transcribe, document faux/gpt-4.1" },
+		customs: [],
 	});
 });
 
@@ -143,17 +146,7 @@ test("shows only the media models that are set in the footer", async () => {
 
 test("shows nothing in the footer when no media model is set", async () => {
 	const { ui } = await startSession([extension]);
-	assert.deepEqual(ui, { notifications: [], statuses: {} });
-});
-
-test("still attaches a file of a type with a media model to the main model", async () => {
-	const { session, requests, settle } = await startSession([extension], {
-		files: { "pi-media.json": JSON.stringify(MODELS), "a.mp3": MP3_BYTES },
-	});
-	await settle(session.prompt("listen to @a.mp3"));
-	assert.deepEqual(requests[0].payload, {
-		messages: [{ role: "user", content: [{ type: "text", text: "listen to @a.mp3" }, MP3_PART] }],
-	});
+	assert.deepEqual(ui, { notifications: [], statuses: {}, customs: [] });
 });
 
 test("shows an error for each media model with a provider that pi does not know and then attaches no files", async () => {
@@ -178,6 +171,7 @@ test("shows an error for each media model with a provider that pi does not know 
 			},
 		],
 		statuses: {},
+		customs: [],
 	});
 	await settle(session.prompt("listen to @a.mp3"));
 	assert.deepEqual(
@@ -191,7 +185,7 @@ test("writes each unknown provider error to stderr when pi has no UI", async (t)
 	const consoleError = t.mock.method(console, "error", () => {});
 	const { dir } = await startSession([extension], {
 		files: { "pi-media.json": JSON.stringify({ audioModel: { ...MODELS.audioModel, provider: "nope" } }) },
-		hasUI: false,
+		mode: "print",
 	});
 	assert.deepEqual(
 		consoleError.mock.calls.map((call) => call.arguments),

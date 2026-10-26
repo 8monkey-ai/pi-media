@@ -1,6 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import {
 	type AssistantMessage,
 	type FauxResponseFactory,
@@ -15,6 +16,7 @@ import {
 	type ExtensionFactory,
 	type ExtensionUIContext,
 	type InputEvent,
+	initTheme,
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
@@ -28,6 +30,8 @@ function userPayload(messages: Message[]) {
 	return { messages: messages.filter((message) => message.role === "user").map(({ role, content }) => ({ role, content })) };
 }
 
+export type Mode = "tui" | "rpc" | "print";
+
 type SessionOptions = {
 	files?: Record<string, string | Buffer>;
 	sessionManager?: (dir: string) => SessionManager;
@@ -36,7 +40,7 @@ type SessionOptions = {
 	tools?: string[];
 	reply?: (messages: Message[]) => AssistantMessage;
 	payload?: (messages: Message[]) => unknown;
-	hasUI?: boolean;
+	mode?: Mode;
 };
 
 // Extensions find their config through `getAgentDir()`, so it names the session directory while they load.
@@ -51,10 +55,41 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 	}
 }
 
-function recordingUI() {
+type CustomFactory = Parameters<ExtensionUIContext["custom"]>[0];
+type CustomComponent = Awaited<ReturnType<CustomFactory>>;
+
+// The visible text of a component, without colors, borders and empty lines.
+const visibleLines = (component: CustomComponent) =>
+	component
+		.render(80)
+		.map((line) => stripVTControlCharacters(line).trim())
+		.filter((line) => line !== "" && !/^─+$/.test(line));
+
+// In the terminal UI, `custom` records the text of each component when it shows, and `press` sends keys to the component
+// that shows now. In RPC mode, `custom` shows nothing and gives undefined, as pi does.
+function recordingUI(mode: Mode) {
 	const notifications: Array<{ message: string; type?: string }> = [];
 	const statuses: Record<string, string> = {};
-	// The extensions under test call only `notify` and `setStatus`.
+	const customs: string[][] = [];
+	let shown: CustomComponent | undefined;
+	// Pi's components read the global theme, which pi sets up in the terminal UI.
+	initTheme();
+	const theme = { fg: (_color: string, text: string) => text } as Parameters<CustomFactory>[1];
+	const tui = { requestRender: () => {} } as Parameters<CustomFactory>[0];
+	const keybindings = {} as Parameters<CustomFactory>[2];
+	const showCustom = (factory: CustomFactory) =>
+		new Promise<unknown>((resolve) => {
+			const done = (result: unknown) => {
+				shown?.dispose?.();
+				shown = undefined;
+				resolve(result);
+			};
+			void Promise.resolve(factory(tui, theme, keybindings, done)).then((component) => {
+				shown = component;
+				customs.push(visibleLines(component));
+			});
+		});
+	// The extensions under test call only `notify`, `setStatus` and `custom`.
 	const uiContext = {
 		notify: (message, type) => {
 			notifications.push({ message, type });
@@ -63,8 +98,10 @@ function recordingUI() {
 			if (text === undefined) delete statuses[key];
 			else statuses[key] = text;
 		},
+		custom: mode === "tui" ? showCustom : async () => undefined,
 	} as ExtensionUIContext;
-	return { notifications, statuses, uiContext };
+	const press = (data: string) => shown?.handleInput?.(data);
+	return { notifications, statuses, customs, press, uiContext };
 }
 
 // Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
@@ -76,7 +113,7 @@ function recordingUI() {
 // `tools` names the active tools.
 // `reply` makes the answer of the model from the request messages, for example a tool call.
 // `payload` makes the provider payload from the request messages.
-// `hasUI: false` binds no UI, as pi does in print mode.
+// `mode` is the mode that pi runs in. Print mode has no UI.
 export async function startSession(
 	extensions: ExtensionFactory[],
 	{
@@ -87,7 +124,7 @@ export async function startSession(
 		tools = [],
 		reply = () => fauxAssistantMessage("ok"),
 		payload: makePayload = userPayload,
-		hasUI = true,
+		mode = "tui",
 	}: SessionOptions = {},
 ) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-media-session-"));
@@ -125,12 +162,13 @@ export async function startSession(
 		sessionManager: sessionManager?.(dir) ?? SessionManager.inMemory(dir),
 		tools,
 	});
-	const { uiContext, ...ui } = recordingUI();
-	await session.bindExtensions(hasUI ? { uiContext } : { mode: "print" });
+	const { uiContext, press, ...ui } = recordingUI(mode);
+	await session.bindExtensions(mode === "print" ? { mode } : { uiContext, mode });
 
-	async function waitForCall() {
-		while (gates.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+	async function waitFor(condition: () => boolean) {
+		while (!condition()) await new Promise((resolve) => setTimeout(resolve, 1));
 	}
+	const waitForCall = () => waitFor(() => gates.length > 0);
 
 	// Lets every waiting and later model call finish until `run` resolves and the session is idle.
 	async function settle(run: Promise<unknown>) {
@@ -145,7 +183,7 @@ export async function startSession(
 		}
 	}
 
-	return { session, dir, requests, ui, waitForCall, settle };
+	return { session, dir, requests, ui, press, waitFor, waitForCall, settle };
 }
 
 // Runs after pi-media and records the input that pi-media passes on.

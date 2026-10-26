@@ -52,8 +52,8 @@ export function widePng(width: number) {
 	]);
 }
 
-// The image content that pi gets for PNG_BYTES.
-export const PNG_IMAGE = { type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ", mimeType: "image/png" };
+// PNG_BYTES in base64.
+export const PNG_DATA = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ";
 
 // The Chat Completions part that carries MP3_BYTES.
 export const MP3_PART = { type: "input_audio", input_audio: { data: "//uQRAAAAAA=", format: "mp3" } };
@@ -63,9 +63,6 @@ export async function fixtureDir(files: Record<string, string | Buffer>) {
 	for (const [name, content] of Object.entries(files)) await writeFile(join(dir, name), content);
 	return dir;
 }
-
-// The result of findLocalMedia when the text names no media file.
-export const NOTHING = { images: [], attachments: [] };
 
 export function findMedia(text: string, cwd: string) {
 	return findLocalMedia(text, cwd, 20971520);

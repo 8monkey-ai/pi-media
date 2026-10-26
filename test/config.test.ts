@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { readSettings } from "../src/config.ts";
 import extension from "../src/index.ts";
+import { mediaApiNames } from "../src/media-apis.ts";
 import { startSession } from "./session-harness.ts";
 
 let agentDir: string;
@@ -27,22 +28,22 @@ async function writeConfig(content: string) {
 }
 
 test("uses 20 MB and no media models when the config file is missing", () => {
-	assert.deepEqual(readSettings().settings, { maxAttachmentBytes: 20971520 });
+	assert.deepEqual(readSettings(mediaApiNames).settings, { maxAttachmentBytes: 20971520 });
 });
 
 test("uses 20 MB when the config file has no maxAttachmentBytes and ignores other keys", async () => {
 	await writeConfig('{"other": true}');
-	assert.equal(readSettings().settings.maxAttachmentBytes, 20971520);
+	assert.equal(readSettings(mediaApiNames).settings.maxAttachmentBytes, 20971520);
 });
 
 test("fails when the config path exists but cannot be read as a file", async () => {
 	await mkdir(configPath());
-	assert.throws(() => readSettings(), { code: "EISDIR" });
+	assert.throws(() => readSettings(mediaApiNames), { code: "EISDIR" });
 });
 
 test("fails with the file path when the config file is not valid JSON", async () => {
 	await writeConfig("{maxAttachmentBytes: 5}");
-	assert.throws(() => readSettings(), {
+	assert.throws(() => readSettings(mediaApiNames), {
 		message: new RegExp(`^pi-media: ${configPath()} is not valid JSON: `),
 	});
 });
@@ -50,7 +51,7 @@ test("fails with the file path when the config file is not valid JSON", async ()
 test("fails with the file path when the config file does not hold a JSON object", async () => {
 	for (const content of ["null", "[]", "5"]) {
 		await writeConfig(content);
-		assert.throws(() => readSettings(), { message: `pi-media: ${configPath()} must hold a JSON object` });
+		assert.throws(() => readSettings(mediaApiNames), { message: `pi-media: ${configPath()} must hold a JSON object` });
 	}
 });
 
@@ -63,7 +64,9 @@ test("fails with the setting and the file path when maxAttachmentBytes is not a 
 		["null", "must be integer"],
 	]) {
 		await writeConfig(`{"maxAttachmentBytes": ${value}}`);
-		assert.throws(() => readSettings(), { message: `pi-media: maxAttachmentBytes in ${configPath()} ${rule}, got ${value}` });
+		assert.throws(() => readSettings(mediaApiNames), {
+			message: `pi-media: maxAttachmentBytes in ${configPath()} ${rule}, got ${value}`,
+		});
 	}
 });
 
@@ -74,7 +77,7 @@ test("fails with the setting and the file path when a media model has no provide
 		["{}", '"provider", "id", "api"'],
 	]) {
 		await writeConfig(`{"audioModel": ${model}}`);
-		assert.throws(() => readSettings(), { message: `pi-media: audioModel in ${configPath()} has no ${missing}` });
+		assert.throws(() => readSettings(mediaApiNames), { message: `pi-media: audioModel in ${configPath()} has no ${missing}` });
 	}
 });
 
@@ -90,7 +93,7 @@ test("fails with the setting and the file path when a media model has a value of
 		["null", "imageModel", "must be object, got null"],
 	]) {
 		await writeConfig(`{"imageModel": ${model}}`);
-		assert.throws(() => readSettings(), { message: `pi-media: ${field} in ${configPath()} ${rule}` });
+		assert.throws(() => readSettings(mediaApiNames), { message: `pi-media: ${field} in ${configPath()} ${rule}` });
 	}
 });
 
@@ -100,7 +103,7 @@ test("fails with the setting and the file path when a media model has an empty p
 		['{"provider": "hebo", "id": "", "api": "openai-completions"}', "documentModel.id"],
 	]) {
 		await writeConfig(`{"documentModel": ${model}}`);
-		assert.throws(() => readSettings(), {
+		assert.throws(() => readSettings(mediaApiNames), {
 			message: `pi-media: ${field} in ${configPath()} must not have fewer than 1 characters, got ""`,
 		});
 	}
