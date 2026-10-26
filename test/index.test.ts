@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import extension from "../src/index.ts";
 import { MP3_BYTES, MP3_PART, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
@@ -117,4 +118,150 @@ test("passes input without media on unchanged", async () => {
 	await settle(session.prompt("hello"));
 	assert.deepEqual(inputs, [{ text: "hello", images: undefined }]);
 	assert.deepEqual(requests[0].payload, { messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }] });
+});
+
+const MODELS = {
+	documentModel: { provider: "faux", id: "gpt-4.1", api: "openai-completions" },
+	audioModel: { provider: "faux", id: "gpt-transcribe", api: "openai-transcriptions" },
+	imageModel: { provider: "faux", id: "gpt-4.1-mini", api: "openai-completions" },
+};
+
+test("shows the media models in the footer in the order image, audio, document", async () => {
+	const { ui } = await startSession([extension], { files: { "pi-media.json": JSON.stringify(MODELS) } });
+	assert.deepEqual(ui, {
+		notifications: [],
+		statuses: { "pi-media": "media: image faux/gpt-4.1-mini, audio faux/gpt-transcribe, document faux/gpt-4.1" },
+	});
+});
+
+test("shows only the media models that are set in the footer", async () => {
+	const { ui } = await startSession([extension], {
+		files: { "pi-media.json": JSON.stringify({ audioModel: MODELS.audioModel }) },
+	});
+	assert.deepEqual(ui.statuses, { "pi-media": "media: audio faux/gpt-transcribe" });
+});
+
+test("shows nothing in the footer when no media model is set", async () => {
+	const { ui } = await startSession([extension]);
+	assert.deepEqual(ui, { notifications: [], statuses: {} });
+});
+
+test("still attaches a file of a type with a media model to the main model", async () => {
+	const { session, requests, settle } = await startSession([extension], {
+		files: { "pi-media.json": JSON.stringify(MODELS), "a.mp3": MP3_BYTES },
+	});
+	await settle(session.prompt("listen to @a.mp3"));
+	assert.deepEqual(requests[0].payload, {
+		messages: [{ role: "user", content: [{ type: "text", text: "listen to @a.mp3" }, MP3_PART] }],
+	});
+});
+
+test("shows an error for each media model with a provider that pi does not know and then attaches no files", async () => {
+	const settings = {
+		imageModel: { provider: "nope", id: "gpt-4.1-mini", api: "openai-completions" },
+		audioModel: { provider: "faux", id: "gpt-transcribe", api: "openai-transcriptions" },
+		documentModel: { provider: "gone", id: "gpt-4.1", api: "openai-completions" },
+	};
+	const { session, dir, requests, ui, settle } = await startSession([extension], {
+		files: { "pi-media.json": JSON.stringify(settings), "a.mp3": MP3_BYTES },
+	});
+	const path = join(dir, "pi-media.json");
+	assert.deepEqual(ui, {
+		notifications: [
+			{
+				message: `pi-media: imageModel in ${path}: pi has no provider "nope". Add it in models.json or with an extension. pi-media is off for this session.`,
+				type: "error",
+			},
+			{
+				message: `pi-media: documentModel in ${path}: pi has no provider "gone". Add it in models.json or with an extension. pi-media is off for this session.`,
+				type: "error",
+			},
+		],
+		statuses: {},
+	});
+	await settle(session.prompt("listen to @a.mp3"));
+	assert.deepEqual(
+		session.sessionManager.getBranch().filter((entry) => entry.type === "custom"),
+		[],
+	);
+	assert.deepEqual(requests[0].payload, { messages: [{ role: "user", content: [{ type: "text", text: "listen to @a.mp3" }] }] });
+});
+
+test("writes each unknown provider error to stderr when pi has no UI", async (t) => {
+	const consoleError = t.mock.method(console, "error", () => {});
+	const { dir } = await startSession([extension], {
+		files: { "pi-media.json": JSON.stringify({ audioModel: { ...MODELS.audioModel, provider: "nope" } }) },
+		hasUI: false,
+	});
+	assert.deepEqual(
+		consoleError.mock.calls.map((call) => call.arguments),
+		[
+			[
+				`pi-media: audioModel in ${join(dir, "pi-media.json")}: pi has no provider "nope". Add it in models.json or with an extension. pi-media is off for this session.`,
+			],
+		],
+	);
+});
+
+// The prompt is the marker text of the stored attachment, so that the payload has a marker even when the context hook adds none.
+test("gives no file for a marker in the prompt while a media model has a provider that pi does not know", async () => {
+	let entryId = "";
+	const { session, requests, settle } = await startSession([extension], {
+		files: { "pi-media.json": JSON.stringify({ audioModel: { ...MODELS.audioModel, provider: "nope" } }) },
+		sessionManager: (dir) => {
+			const manager = SessionManager.inMemory(dir);
+			const text = "listen to @a.mp3";
+			entryId = manager.appendCustomEntry("pi-media", {
+				text,
+				attachments: [{ path: join(dir, "a.mp3"), mimeType: "audio/mpeg", data: MP3_BYTES.toString("base64") }],
+			});
+			manager.appendMessage({ role: "user", content: [{ type: "text", text }], timestamp: 1 });
+			manager.appendMessage(fauxAssistantMessage("ok"));
+			return manager;
+		},
+	});
+	await settle(session.prompt(`[[pi-media:${entryId}:0]]`));
+	assert.deepEqual(requests[0].payload, {
+		messages: [
+			{ role: "user", content: [{ type: "text", text: "listen to @a.mp3" }] },
+			{ role: "user", content: [{ type: "text", text: `[[pi-media:${entryId}:0]]` }] },
+		],
+	});
+});
+
+test("tells the model that a stored read of a media file is not in the request while a media model has a provider that pi does not know", async () => {
+	const { session, requests, settle } = await startSession([extension], {
+		files: { "pi-media.json": JSON.stringify({ audioModel: { ...MODELS.audioModel, provider: "nope" } }) },
+		sessionManager: (dir) => {
+			const manager = SessionManager.inMemory(dir);
+			manager.appendMessage({ role: "user", content: [{ type: "text", text: "listen to a.mp3" }], timestamp: 1 });
+			manager.appendMessage(
+				fauxAssistantMessage(fauxToolCall("read", { path: "a.mp3" }, { id: "call-1" }), { stopReason: "toolUse" }),
+			);
+			manager.appendMessage({
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "read",
+				content: [{ type: "text", text: "Read audio file [audio/mpeg]" }],
+				details: { path: join(dir, "a.mp3"), mimeType: "audio/mpeg", data: MP3_BYTES.toString("base64") },
+				isError: false,
+				timestamp: 2,
+			});
+			manager.appendMessage(fauxAssistantMessage("ok"));
+			return manager;
+		},
+	});
+	await settle(session.prompt("again"));
+	assert.deepEqual(
+		requests[0].messages.flatMap((message) => (message.role === "toolResult" ? [message.content] : [])),
+		[
+			[
+				{ type: "text", text: "Read audio file [audio/mpeg]" },
+				{
+					type: "text",
+					text: "[The API of the current model cannot take this file type. The file content is not in this request.]",
+				},
+			],
+		],
+	);
 });

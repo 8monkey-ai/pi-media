@@ -13,7 +13,11 @@ function context(cwd: string) {
 type ReadParams = { path: string; offset?: number; limit?: number };
 
 async function readWithMedia(dir: string, params: ReadParams, autoResizeImages?: boolean) {
-	return createMediaReadTool(() => autoResizeImages, 20971520).execute("call-1", params, undefined, undefined, context(dir));
+	return createMediaReadTool(
+		() => autoResizeImages,
+		20971520,
+		() => true,
+	).execute("call-1", params, undefined, undefined, context(dir));
 }
 
 async function readWithPi(dir: string, params: ReadParams, autoResizeImages?: boolean) {
@@ -67,13 +71,24 @@ test("fails for a missing file with the error of pi's read tool", async () => {
 });
 
 test("tells the model that the tool also reads audio, video and PDF files", () => {
-	assert.match(createMediaReadTool(() => undefined, 20971520).description, /Also reads audio, video and PDF files\./);
+	assert.match(
+		createMediaReadTool(
+			() => undefined,
+			20971520,
+			() => true,
+		).description,
+		/Also reads audio, video and PDF files\./,
+	);
 });
 
 test("returns a note without the bytes for a media file larger than the size cap", async () => {
 	const dir = await fixtureDir({ "report.pdf": "%PDF-1.4 ", "max.pdf": "%PDF-1.4" });
 	const read = (path: string) =>
-		createMediaReadTool(() => undefined, 8).execute("call-1", { path }, undefined, undefined, context(dir));
+		createMediaReadTool(
+			() => undefined,
+			8,
+			() => true,
+		).execute("call-1", { path }, undefined, undefined, context(dir));
 	assert.deepEqual(await read("report.pdf"), {
 		content: [
 			{
