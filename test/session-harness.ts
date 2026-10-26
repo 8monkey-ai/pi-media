@@ -15,6 +15,7 @@ import {
 	type ExtensionFactory,
 	type ExtensionUIContext,
 	type InputEvent,
+	initTheme,
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
@@ -36,7 +37,7 @@ type SessionOptions = {
 	tools?: string[];
 	reply?: (messages: Message[]) => AssistantMessage;
 	payload?: (messages: Message[]) => unknown;
-	hasUI?: boolean;
+	mode?: "tui" | "rpc" | "print";
 };
 
 // Extensions find their config through `getAgentDir()`, so it names the session directory while they load.
@@ -51,11 +52,31 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 	}
 }
 
+type CustomFactory = Parameters<ExtensionUIContext["custom"]>[0];
+
+// `custom` records the text of each component that it shows, and `press` sends keys to the component that shows now.
 function recordingUI() {
 	const notifications: Array<{ message: string; type?: string }> = [];
 	const statuses: Record<string, string> = {};
-	// The extensions under test call only `notify` and `setStatus`.
+	const customs: string[] = [];
+	let shown: Awaited<ReturnType<CustomFactory>> | undefined;
+	// Pi's components read the global theme, which pi sets up in the terminal UI.
+	initTheme();
+	const theme = { fg: (_color: string, text: string) => text } as never;
+	const custom = (factory: CustomFactory) =>
+		new Promise((resolve) => {
+			const done = (result: unknown) => {
+				shown?.dispose?.();
+				resolve(result);
+			};
+			void Promise.resolve(factory({ requestRender() {} } as never, theme, {} as never, done)).then((component) => {
+				shown = component;
+				customs.push(component.render(80).join("\n"));
+			});
+		});
+	// The extensions under test call only `notify`, `setStatus` and `custom`.
 	const uiContext = {
+		custom,
 		notify: (message, type) => {
 			notifications.push({ message, type });
 		},
@@ -64,7 +85,8 @@ function recordingUI() {
 			else statuses[key] = text;
 		},
 	} as ExtensionUIContext;
-	return { notifications, statuses, uiContext };
+	const press = (data: string) => shown?.handleInput?.(data);
+	return { notifications, statuses, customs, press, uiContext };
 }
 
 // Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
@@ -76,7 +98,7 @@ function recordingUI() {
 // `tools` names the active tools.
 // `reply` makes the answer of the model from the request messages, for example a tool call.
 // `payload` makes the provider payload from the request messages.
-// `hasUI: false` binds no UI, as pi does in print mode.
+// `mode` is the mode that pi runs in. Print mode has no UI.
 export async function startSession(
 	extensions: ExtensionFactory[],
 	{
@@ -87,7 +109,7 @@ export async function startSession(
 		tools = [],
 		reply = () => fauxAssistantMessage("ok"),
 		payload: makePayload = userPayload,
-		hasUI = true,
+		mode = "tui",
 	}: SessionOptions = {},
 ) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-media-session-"));
@@ -125,12 +147,13 @@ export async function startSession(
 		sessionManager: sessionManager?.(dir) ?? SessionManager.inMemory(dir),
 		tools,
 	});
-	const { uiContext, ...ui } = recordingUI();
-	await session.bindExtensions(hasUI ? { uiContext } : { mode: "print" });
+	const { uiContext, customs, press, ...ui } = recordingUI();
+	await session.bindExtensions(mode === "print" ? { mode } : { uiContext, mode });
 
-	async function waitForCall() {
-		while (gates.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+	async function waitFor(condition: () => boolean) {
+		while (!condition()) await new Promise((resolve) => setTimeout(resolve, 1));
 	}
+	const waitForCall = () => waitFor(() => gates.length > 0);
 
 	// Lets every waiting and later model call finish until `run` resolves and the session is idle.
 	async function settle(run: Promise<unknown>) {
@@ -145,7 +168,7 @@ export async function startSession(
 		}
 	}
 
-	return { session, dir, requests, ui, waitForCall, settle };
+	return { session, dir, requests, ui, customs, press, waitFor, waitForCall, settle };
 }
 
 // Runs after pi-media and records the input that pi-media passes on.

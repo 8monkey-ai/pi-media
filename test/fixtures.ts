@@ -64,9 +64,6 @@ export async function fixtureDir(files: Record<string, string | Buffer>) {
 	return dir;
 }
 
-// The result of findLocalMedia when the text names no media file.
-export const NOTHING = { images: [], attachments: [] };
-
 export function findMedia(text: string, cwd: string) {
 	return findLocalMedia(text, cwd, 20971520);
 }

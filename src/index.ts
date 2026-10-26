@@ -6,7 +6,9 @@ import { markContext } from "./context.ts";
 import { carries } from "./file-parts.ts";
 import { findLocalMedia } from "./media.ts";
 import { ENTRY_TYPE, findAttachment, type MediaEntryData } from "./media-entry.ts";
+import { readWithMediaModels } from "./media-model.ts";
 import { footerStatus, unknownProviderErrors } from "./media-status.ts";
+import { renderMediaText, TEXT_TYPE } from "./media-text.ts";
 import { createMediaReadTool } from "./read-tool.ts";
 
 // Only the Chat Completions API gets files. Other APIs, and virtual models that hide the API that answers, get the path
@@ -37,14 +39,35 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.setStatus("pi-media", enabled ? footerStatus(settings) : undefined);
 	});
 
+	pi.registerMessageRenderer(TEXT_TYPE, renderMediaText);
+
+	// A text goes after the user message. For a message that waits in the queue, the text goes in the same queue, before
+	// the message.
 	pi.on("input", async (event, ctx) => {
 		if (!enabled) return { action: "continue" };
-		const { images, attachments } = await findLocalMedia(event.text, ctx.cwd, maxAttachmentBytes);
+		// shortcut: pi gives the main model one queued message per turn, so a message sent while the agent works gets a turn
+		// with the text alone before the user message, upgrade when pi can deliver a custom message with a queued message.
+		// A `nextTurn` text stays pending when the prompt fails after this hook, and goes with the next prompt.
+		const deliverAs = event.streamingBehavior ?? "nextTurn";
+		// Pi puts its images before the text. Images that pi-media did not read from a path have no name, so their number
+		// names them.
+		const pasted = (event.images ?? []).map(({ data, mimeType }, index) => ({ path: `image ${index + 1}`, mimeType, data }));
+		const found = await findLocalMedia(event.text, ctx.cwd, maxAttachmentBytes);
+		const others = await readWithMediaModels([...pasted, ...found], settings, ctx, ({ text, error }) =>
+			pi.sendMessage({ customType: TEXT_TYPE, content: text, display: true, details: { error } }, { deliverAs }),
+		);
+		const images = others.filter(({ mimeType }) => mimeType.startsWith("image/"));
+		const attachments = others.filter(({ mimeType }) => !mimeType.startsWith("image/"));
 		if (attachments.length > 0) {
 			pi.appendEntry(ENTRY_TYPE, { text: event.text, attachments } satisfies MediaEntryData);
 		}
-		if (images.length === 0) return { action: "continue" };
-		return { action: "transform", text: event.text, images: [...(event.images ?? []), ...images] };
+		// All images go to the image model or none do, so the same number of images means that pi has its own images.
+		if (images.length === pasted.length) return { action: "continue" };
+		return {
+			action: "transform",
+			text: event.text,
+			images: images.map(({ data, mimeType }) => ({ type: "image", data, mimeType })),
+		};
 	});
 
 	// The files of tool results go in a user message after the tool messages. A model that needs an assistant message

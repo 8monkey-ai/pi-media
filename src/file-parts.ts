@@ -26,10 +26,17 @@ const videoUrlPart: Build = ({ mimeType, data }) => ({
 	video_url: { url: `data:${mimeType};base64,${data}` },
 });
 
+// Pi gives images to the main model as image content. Only a call to an image model puts an image in a marker.
+const imageUrlPart: Build = ({ mimeType, data }) => ({
+	type: "image_url",
+	image_url: { url: `data:${mimeType};base64,${data}` },
+});
+
 // The Chat Completions part for a file of this type, in the forms that OpenRouter documents.
 function partFor(mimeType: string): Build | undefined {
 	if (mimeType === "application/pdf") return pdfPart;
 	if (videoTypes.has(mimeType)) return videoUrlPart;
+	if (mimeType.startsWith("image/")) return imageUrlPart;
 	const format = audioFormats.get(mimeType);
 	if (format === undefined) return undefined;
 	return ({ data }) => ({ type: "input_audio", input_audio: { data, format } });

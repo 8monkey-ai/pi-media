@@ -146,16 +146,6 @@ test("shows nothing in the footer when no media model is set", async () => {
 	assert.deepEqual(ui, { notifications: [], statuses: {} });
 });
 
-test("still attaches a file of a type with a media model to the main model", async () => {
-	const { session, requests, settle } = await startSession([extension], {
-		files: { "pi-media.json": JSON.stringify(MODELS), "a.mp3": MP3_BYTES },
-	});
-	await settle(session.prompt("listen to @a.mp3"));
-	assert.deepEqual(requests[0].payload, {
-		messages: [{ role: "user", content: [{ type: "text", text: "listen to @a.mp3" }, MP3_PART] }],
-	});
-});
-
 test("shows an error for each media model with a provider that pi does not know and then attaches no files", async () => {
 	const settings = {
 		imageModel: { provider: "nope", id: "gpt-4.1-mini", api: "openai-completions" },
@@ -191,7 +181,7 @@ test("writes each unknown provider error to stderr when pi has no UI", async (t)
 	const consoleError = t.mock.method(console, "error", () => {});
 	const { dir } = await startSession([extension], {
 		files: { "pi-media.json": JSON.stringify({ audioModel: { ...MODELS.audioModel, provider: "nope" } }) },
-		hasUI: false,
+		mode: "print",
 	});
 	assert.deepEqual(
 		consoleError.mock.calls.map((call) => call.arguments),
