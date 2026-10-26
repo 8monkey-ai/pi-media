@@ -1,11 +1,11 @@
 import { basename } from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { type MediaKind, mediaModels, type Settings } from "./config.ts";
-import { mediaApi } from "./media-apis.ts";
+import { BorderedLoader, type ExtensionContext, type ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { mediaModels, type Settings } from "./config.ts";
 import type { Attachment } from "./media-entry.ts";
-import { mediaText } from "./media-text.ts";
+import { readWithChatModel } from "./openai-completions-api.ts";
+import { transcribe } from "./openai-transcriptions-api.ts";
 
-const KINDS: Record<MediaKind, { instruction: string; verb: string; progress: string; heading: string }> = {
+const KINDS = {
 	image: {
 		instruction: "Describe this image. Then give all text that is in the image, word for word.",
 		verb: "describe",
@@ -27,21 +27,16 @@ const KINDS: Record<MediaKind, { instruction: string; verb: string; progress: st
 	},
 };
 
-export type MediaModelSetting = ReturnType<typeof mediaModels>[number];
+type MediaModel = ReturnType<typeof mediaModels>[number];
+type Note = { text: string; error: boolean };
 
-function kindOf(mimeType: string): MediaKind | undefined {
+function kindOf(mimeType: string) {
 	if (mimeType.startsWith("image/")) return "image";
 	if (mimeType.startsWith("audio/")) return "audio";
 	return mimeType === "application/pdf" ? "document" : undefined;
 }
 
-export const mediaModelFor = (settings: Settings, mimeType: string) =>
-	mediaModels(settings).find(({ kind }) => kind === kindOf(mimeType));
-
-const modelName = ({ provider, id }: MediaModelSetting) => `${provider}/${id}`;
-
-export const progressText = (file: Attachment, model: MediaModelSetting) =>
-	`${KINDS[model.kind].progress} ${basename(file.path)} with ${modelName(model)}…`;
+const modelName = ({ provider, id }: MediaModel) => `${provider}/${id}`;
 
 // Node's `fetch` gives the cause of a network failure, such as a timeout, only in `cause`.
 function reasonOf(error: unknown, signal: AbortSignal) {
@@ -51,21 +46,50 @@ function reasonOf(error: unknown, signal: AbortSignal) {
 	return /[.!?]$/.test(reason) ? reason : `${reason}.`;
 }
 
-export async function readWithMediaModel(
-	file: Attachment,
-	model: MediaModelSetting,
-	registry: ExtensionContext["modelRegistry"],
-	signal: AbortSignal,
-) {
+async function readWithMediaModel(file: Attachment, model: MediaModel, registry: ModelRegistry, signal: AbortSignal) {
 	const { instruction, verb, heading } = KINDS[model.kind];
 	const name = basename(file.path);
 	try {
 		signal.throwIfAborted();
-		const call = { file, provider: model.provider, id: model.id, instruction, signal };
-		const text = await mediaApi(model.api).read(call, registry);
+		// The settings allow only these two APIs, so the set is closed and needs no registry.
+		const text =
+			model.api === "openai-completions"
+				? await readWithChatModel(file, model.provider, model.id, instruction, registry, signal)
+				: await transcribe(file, model.provider, model.id, registry, signal);
 		if (text.trim() === "") throw new Error("the model gave no text");
-		return { text: mediaText(`${heading} of ${name} · ${modelName(model)}`, text), error: false };
+		return { text: `${heading} of ${name} · ${modelName(model)}\n\n${text}`, error: false };
 	} catch (error) {
 		return { text: `pi-media: ${modelName(model)} could not ${verb} ${name}: ${reasonOf(error, signal)}`, error: true };
 	}
+}
+
+// The terminal UI shows a loader while the call runs, and Esc on the loader aborts `stop`. Other modes show nothing,
+// so the call cannot be stopped there. A stopped message calls no model, so it shows no loader.
+function readShowingLoader(file: Attachment, model: MediaModel, ctx: ExtensionContext, stop: AbortController) {
+	const read = () => readWithMediaModel(file, model, ctx.modelRegistry, stop.signal);
+	if (ctx.mode !== "tui" || stop.signal.aborted) return read();
+	const progress = `${KINDS[model.kind].progress} ${basename(file.path)} with ${modelName(model)}…`;
+	return ctx.ui.custom<Note>((tui, theme, _keybindings, done) => {
+		const loader = new BorderedLoader(tui, theme, progress);
+		loader.onAbort = () => stop.abort();
+		void read().then(done);
+		return loader;
+	});
+}
+
+// Gives the files of types without a media model. Esc stops the current call and the calls for the files after it.
+export async function readWithMediaModels(
+	files: Attachment[],
+	settings: Settings,
+	ctx: ExtensionContext,
+	send: (note: Note) => void,
+) {
+	const stop = new AbortController();
+	const others: Attachment[] = [];
+	for (const file of files) {
+		const model = mediaModels(settings).find(({ kind }) => kind === kindOf(file.mimeType));
+		if (model) send(await readShowingLoader(file, model, ctx, stop));
+		else others.push(file);
+	}
+	return others;
 }

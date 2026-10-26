@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 import { findLocalMedia } from "../src/media.ts";
-import { findMedia, fixtureDir, MP3_BYTES, MP4_BYTES, PNG_BYTES, PNG_DATA, WAV_BYTES } from "./fixtures.ts";
+import { findMedia, fixtureDir, MP3_BYTES, MP4_BYTES, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
 
 test("attaches an @-mentioned PDF with its bytes", async () => {
 	const dir = await fixtureDir({ "report.pdf": "%PDF-1.4" });
@@ -31,7 +31,7 @@ test("attaches quoted paths with spaces and keeps trailing punctuation outside t
 test("finds an @-mentioned image with its bytes", async () => {
 	const dir = await fixtureDir({ "shot.png": PNG_BYTES });
 	assert.deepEqual(await findMedia("what is in @shot.png?", dir), [
-		{ path: join(dir, "shot.png"), mimeType: "image/png", data: PNG_DATA },
+		{ path: join(dir, "shot.png"), mimeType: "image/png", data: PNG_IMAGE.data },
 	]);
 });
 
@@ -88,6 +88,6 @@ test("attaches a file that the message names more than one time once", async () 
 	const dir = await fixtureDir({ "a.pdf": "%PDF-1.4", "shot.png": PNG_BYTES });
 	assert.deepEqual(await findMedia("@a.pdf and @a.pdf, @shot.png and @./shot.png", dir), [
 		{ path: join(dir, "a.pdf"), mimeType: "application/pdf", data: "JVBERi0xLjQ=" },
-		{ path: join(dir, "shot.png"), mimeType: "image/png", data: PNG_DATA },
+		{ path: join(dir, "shot.png"), mimeType: "image/png", data: PNG_IMAGE.data },
 	]);
 });

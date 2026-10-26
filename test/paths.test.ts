@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import { findPathCandidates } from "../src/find-paths.ts";
-import { findMedia, fixtureDir, MP3_BYTES, PNG_BYTES, PNG_DATA } from "./fixtures.ts";
+import { findMedia, fixtureDir, MP3_BYTES, PNG_BYTES, PNG_IMAGE } from "./fixtures.ts";
 
 const dir = await fixtureDir({
 	"shot.png": PNG_BYTES,
@@ -23,7 +23,7 @@ const dir = await fixtureDir({
 await mkdir(join(dir, "sub"));
 
 const pdf = (name: string) => ({ path: join(dir, name), mimeType: "application/pdf", data: "JVBERi0xLjQ=" });
-const png = (name: string) => ({ path: join(dir, name), mimeType: "image/png", data: PNG_DATA });
+const png = (name: string) => ({ path: join(dir, name), mimeType: "image/png", data: PNG_IMAGE.data });
 const myFile = pdf("My File.pdf");
 const report = pdf("report.pdf");
 const clip = { path: join(dir, "clip.mp3"), mimeType: "audio/mpeg", data: "//uQRAAAAAA=" };

@@ -1,7 +1,6 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stripVTControlCharacters } from "node:util";
 import {
 	type AssistantMessage,
 	type FauxResponseFactory,
@@ -30,8 +29,6 @@ function userPayload(messages: Message[]) {
 	return { messages: messages.filter((message) => message.role === "user").map(({ role, content }) => ({ role, content })) };
 }
 
-export type Mode = "tui" | "rpc" | "print";
-
 type SessionOptions = {
 	files?: Record<string, string | Buffer>;
 	sessionManager?: (dir: string) => SessionManager;
@@ -40,7 +37,7 @@ type SessionOptions = {
 	tools?: string[];
 	reply?: (messages: Message[]) => AssistantMessage;
 	payload?: (messages: Message[]) => unknown;
-	mode?: Mode;
+	mode?: "tui" | "rpc" | "print";
 };
 
 // Extensions find their config through `getAgentDir()`, so it names the session directory while they load.
@@ -56,40 +53,30 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 }
 
 type CustomFactory = Parameters<ExtensionUIContext["custom"]>[0];
-type CustomComponent = Awaited<ReturnType<CustomFactory>>;
 
-const visibleLines = (component: CustomComponent) =>
-	component
-		.render(80)
-		.map((line) => stripVTControlCharacters(line).trim())
-		.filter((line) => line !== "" && !/^─+$/.test(line));
-
-// In the terminal UI, `custom` records the text of each component when it shows, and `press` sends keys to the component
-// that shows now. In RPC mode, `custom` shows nothing and gives undefined, as pi does.
-function recordingUI(mode: Mode) {
+// `custom` records the text of each component that it shows, and `press` sends keys to the component that shows now.
+function recordingUI() {
 	const notifications: Array<{ message: string; type?: string }> = [];
 	const statuses: Record<string, string> = {};
-	const customs: string[][] = [];
-	let shown: CustomComponent | undefined;
+	const customs: string[] = [];
+	let shown: Awaited<ReturnType<CustomFactory>> | undefined;
 	// Pi's components read the global theme, which pi sets up in the terminal UI.
 	initTheme();
-	const theme = { fg: (_color: string, text: string) => text } as Parameters<CustomFactory>[1];
-	const tui = { requestRender: () => {} } as Parameters<CustomFactory>[0];
-	const keybindings = {} as Parameters<CustomFactory>[2];
-	const showCustom = (factory: CustomFactory) =>
-		new Promise<unknown>((resolve) => {
+	const theme = { fg: (_color: string, text: string) => text } as never;
+	const custom = (factory: CustomFactory) =>
+		new Promise((resolve) => {
 			const done = (result: unknown) => {
 				shown?.dispose?.();
-				shown = undefined;
 				resolve(result);
 			};
-			void Promise.resolve(factory(tui, theme, keybindings, done)).then((component) => {
+			void Promise.resolve(factory({ requestRender() {} } as never, theme, {} as never, done)).then((component) => {
 				shown = component;
-				customs.push(visibleLines(component));
+				customs.push(component.render(80).join("\n"));
 			});
 		});
 	// The extensions under test call only `notify`, `setStatus` and `custom`.
 	const uiContext = {
+		custom,
 		notify: (message, type) => {
 			notifications.push({ message, type });
 		},
@@ -97,7 +84,6 @@ function recordingUI(mode: Mode) {
 			if (text === undefined) delete statuses[key];
 			else statuses[key] = text;
 		},
-		custom: mode === "tui" ? showCustom : async () => undefined,
 	} as ExtensionUIContext;
 	const press = (data: string) => shown?.handleInput?.(data);
 	return { notifications, statuses, customs, press, uiContext };
@@ -161,7 +147,7 @@ export async function startSession(
 		sessionManager: sessionManager?.(dir) ?? SessionManager.inMemory(dir),
 		tools,
 	});
-	const { uiContext, press, ...ui } = recordingUI(mode);
+	const { uiContext, customs, press, ...ui } = recordingUI();
 	await session.bindExtensions(mode === "print" ? { mode } : { uiContext, mode });
 
 	async function waitFor(condition: () => boolean) {
@@ -182,7 +168,7 @@ export async function startSession(
 		}
 	}
 
-	return { session, dir, requests, ui, press, waitFor, waitForCall, settle };
+	return { session, dir, requests, ui, customs, press, waitFor, waitForCall, settle };
 }
 
 // Runs after pi-media and records the input that pi-media passes on.

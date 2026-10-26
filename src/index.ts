@@ -5,11 +5,10 @@ import { readSettings } from "./config.ts";
 import { markContext } from "./context.ts";
 import { carries } from "./file-parts.ts";
 import { findLocalMedia } from "./media.ts";
-import { mediaApiNames } from "./media-apis.ts";
 import { ENTRY_TYPE, findAttachment, type MediaEntryData } from "./media-entry.ts";
-import { readWithMediaModels } from "./media-input.ts";
+import { readWithMediaModels } from "./media-model.ts";
 import { footerStatus, unknownProviderErrors } from "./media-status.ts";
-import { type MediaTextDetails, renderMediaText, TEXT_TYPE } from "./media-text.ts";
+import { renderMediaText, TEXT_TYPE } from "./media-text.ts";
 import { createMediaReadTool } from "./read-tool.ts";
 
 // Only the Chat Completions API gets files. Other APIs, and virtual models that hide the API that answers, get the path
@@ -17,7 +16,7 @@ import { createMediaReadTool } from "./read-tool.ts";
 const takesFiles = (model: Model<Api> | undefined): model is Model<"openai-completions"> => model?.api === "openai-completions";
 
 export default function (pi: ExtensionAPI) {
-	const { path, settings } = readSettings(mediaApiNames);
+	const { path, settings } = readSettings();
 	const { maxAttachmentBytes } = settings;
 	// Pi has no model registry while extensions load, so `session_start` checks the providers.
 	let enabled = true;
@@ -49,16 +48,14 @@ export default function (pi: ExtensionAPI) {
 		// shortcut: pi gives the main model one queued message per turn, so a message sent while the agent works gets a turn
 		// with the text alone before the user message, upgrade when pi can deliver a custom message with a queued message.
 		// A `nextTurn` text stays pending when the prompt fails after this hook, and goes with the next prompt.
-		const send = (content: string, details: MediaTextDetails) =>
-			pi.sendMessage(
-				{ customType: TEXT_TYPE, content, display: true, details },
-				{ deliverAs: event.streamingBehavior ?? "nextTurn" },
-			);
+		const deliverAs = event.streamingBehavior ?? "nextTurn";
 		// Pi puts its images before the text. Images that pi-media did not read from a path have no name, so their number
 		// names them.
 		const pasted = (event.images ?? []).map(({ data, mimeType }, index) => ({ path: `image ${index + 1}`, mimeType, data }));
 		const found = await findLocalMedia(event.text, ctx.cwd, maxAttachmentBytes);
-		const others = await readWithMediaModels([...pasted, ...found], settings, ctx, send);
+		const others = await readWithMediaModels([...pasted, ...found], settings, ctx, ({ text, error }) =>
+			pi.sendMessage({ customType: TEXT_TYPE, content: text, display: true, details: { error } }, { deliverAs }),
+		);
 		const images = others.filter(({ mimeType }) => mimeType.startsWith("image/"));
 		const attachments = others.filter(({ mimeType }) => !mimeType.startsWith("image/"));
 		if (attachments.length > 0) {

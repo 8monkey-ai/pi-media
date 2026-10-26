@@ -52,8 +52,8 @@ export function widePng(width: number) {
 	]);
 }
 
-// PNG_BYTES in base64.
-export const PNG_DATA = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ";
+// The image content that pi gets for PNG_BYTES.
+export const PNG_IMAGE = { type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ", mimeType: "image/png" };
 
 // The Chat Completions part that carries MP3_BYTES.
 export const MP3_PART = { type: "input_audio", input_audio: { data: "//uQRAAAAAA=", format: "mp3" } };

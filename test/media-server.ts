@@ -1,78 +1,32 @@
-import assert from "node:assert/strict";
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
+import { buffer } from "node:stream/consumers";
 import type { ExtensionFactory, ProviderConfig } from "@earendil-works/pi-coding-agent";
 
-type Reply = { status: number; body: string; contentType?: string } | { text: string; finishReason?: string };
-type Transcription = { model: string; fileName: string; fileType: string; fileData: string };
-type MediaRequest = {
-	path: string;
-	authorization: string | undefined;
-	team?: string;
-	chat?: Record<string, unknown>;
-	transcription?: Transcription;
-};
+type Reply = { status: number; body: string } | { text: string; finishReason?: string };
+type MediaRequest = { path: string; headers: IncomingHttpHeaders; chat?: { model: string; messages: unknown }; form?: FormData };
 
 const chunk = (delta: Record<string, unknown>, finishReason: string | null) =>
-	`data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`;
+	`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`;
 
-async function readBody(request: IncomingMessage) {
-	const chunks: Buffer[] = [];
-	for await (const part of request) chunks.push(part);
-	return Buffer.concat(chunks);
-}
-
-async function readTranscription(request: IncomingMessage, body: Buffer): Promise<Transcription> {
-	const form = await new Request("http://local", {
-		method: "POST",
-		headers: { "content-type": request.headers["content-type"] ?? "" },
-		body,
-	}).formData();
-	const file = form.get("file");
-	assert.ok(file instanceof File);
-	return {
-		model: String(form.get("model")),
-		fileName: file.name,
-		fileType: file.type,
-		fileData: Buffer.from(await file.arrayBuffer()).toString("base64"),
-	};
-}
-
-async function recordRequest(request: IncomingMessage) {
-	const body = await readBody(request);
-	const path = request.url ?? "";
-	const recorded: MediaRequest = { path, authorization: request.headers.authorization };
-	const team = request.headers["x-team"];
-	if (typeof team === "string") recorded.team = team;
-	if (path.endsWith("/chat/completions")) recorded.chat = JSON.parse(body.toString());
-	if (path.endsWith("/audio/transcriptions")) recorded.transcription = await readTranscription(request, body);
-	return recorded;
-}
-
-// An OpenAI-compatible server for media models. `/chat/completions` streams the reply text, `/audio/transcriptions`
-// returns it as JSON. `reply` makes the answer for each request; `hold` keeps the response open until the client goes.
-// `providerConfig` changes the settings of provider "hebo".
+// An OpenAI-compatible server for media models. `/chat/completions` streams `reply`, `/audio/transcriptions` returns it
+// as JSON, and `hold` keeps each response open until the client goes. `providerConfig` changes the provider "hebo".
 export async function startMediaServer(providerConfig: ProviderConfig = {}) {
 	const requests: MediaRequest[] = [];
-	const state: { reply: (request: MediaRequest) => Reply; hold: boolean } = {
-		reply: () => ({ text: "media text" }),
-		hold: false,
-	};
+	const state: { reply: Reply; hold: boolean } = { reply: { text: "media text" }, hold: false };
 	const server = createServer(async (request, response) => {
-		const recorded = await recordRequest(request);
+		const body = await buffer(request);
+		const path = request.url ?? "";
+		const recorded: MediaRequest = { path, headers: request.headers };
+		if (path.endsWith("/chat/completions")) recorded.chat = JSON.parse(body.toString());
+		else
+			recorded.form = await new Response(body, { headers: { "content-type": request.headers["content-type"] ?? "" } }).formData();
 		requests.push(recorded);
 		if (state.hold) return;
-		const reply = state.reply(recorded);
-		if ("status" in reply) {
-			response.writeHead(reply.status, { "content-type": reply.contentType ?? "application/json" }).end(reply.body);
-		} else if (recorded.chat) {
-			response.writeHead(200, { "content-type": "text/event-stream" });
-			response.end(
-				`${chunk({ role: "assistant", content: reply.text }, null)}${chunk({}, reply.finishReason ?? "stop")}data: [DONE]\n\n`,
-			);
-		} else {
-			response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ text: reply.text }));
-		}
+		const { reply } = state;
+		if ("status" in reply) response.writeHead(reply.status, { "content-type": "application/json" }).end(reply.body);
+		else if (!recorded.chat) response.end(JSON.stringify({ text: reply.text }));
+		else response.end(`${chunk({ content: reply.text }, null)}${chunk({}, reply.finishReason ?? "stop")}data: [DONE]\n\n`);
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
