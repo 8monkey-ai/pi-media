@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { access, chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { fauxAssistantMessage, fauxToolCall, type Message } from "@earendil-works/pi-ai";
 import extension from "../src/index.ts";
 import { MP3_BYTES, MP3_PART } from "./fixtures.ts";
 import { startMediaServer } from "./media-server.ts";
@@ -233,4 +234,25 @@ test("uses the model that the user sets for the media call of the next message",
 			{ role: "user", content: [{ type: "text", text: "Transcript of a.mp3 · hebo/gpt-transcribe\n\nmedia text" }] },
 		],
 	});
+});
+
+test("uses the model that the user sets for the next read of the read tool", async () => {
+	const server = await startMediaServer();
+	after(server.close);
+	const { session, errors, settle } = await startSession([server.provider, extension], {
+		files: { "a.mp3": MP3_BYTES },
+		answers: ["Audio      not set", "Type a model…", "hebo/gpt-transcribe", TRANSCRIPTIONS],
+		tools: ["read"],
+		reply: (messages: Message[]) =>
+			messages.at(-1)?.role === "user"
+				? fauxAssistantMessage(fauxToolCall("read", { path: "a.mp3" }, { id: "call-1" }), { stopReason: "toolUse" })
+				: fauxAssistantMessage("ok"),
+	});
+	await session.prompt("/media-models");
+	await settle(session.prompt("summarize a.mp3"));
+	assert.deepEqual(errors, []);
+	const results = session.sessionManager
+		.getBranch()
+		.flatMap((entry) => (entry.type === "message" && entry.message.role === "toolResult" ? [entry.message.content] : []));
+	assert.deepEqual(results, [[{ type: "text", text: "Transcript of a.mp3 · hebo/gpt-transcribe\n\nmedia text" }]]);
 });

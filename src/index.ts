@@ -24,7 +24,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(
 		createMediaReadTool(
 			() => pi.getSettings().images?.autoResize,
-			maxAttachmentBytes,
+			settings,
 			() => enabled,
 		),
 	);

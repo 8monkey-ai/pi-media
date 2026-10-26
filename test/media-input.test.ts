@@ -2,12 +2,10 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
 import extension from "../src/index.ts";
-import { MP3_BYTES, MP3_PART, MP4_BYTES, PNG_BYTES, PNG_IMAGE } from "./fixtures.ts";
+import { AUDIO_MODEL, CHAT_MODEL, MP3_BYTES, MP3_PART, MP4_BYTES, PNG_BYTES, PNG_IMAGE } from "./fixtures.ts";
 import { startMediaServer } from "./media-server.ts";
 import { inputObserver, startSession } from "./session-harness.ts";
 
-const AUDIO_MODEL = { provider: "hebo", id: "gpt-transcribe", api: "openai-transcriptions" };
-const CHAT_MODEL = { provider: "hebo", id: "gpt-4.1-mini", api: "openai-completions" };
 const TRANSCRIPT = "Transcript of a.mp3 · hebo/gpt-transcribe\n\nmedia text";
 const FILES = {
 	"a.mp3": MP3_BYTES,
