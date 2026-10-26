@@ -1,5 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { rewrite } from "./chat-completions.ts";
 import { readSettings } from "./config.ts";
 import { markContext } from "./context.ts";
@@ -7,6 +7,7 @@ import { carries } from "./file-parts.ts";
 import { findLocalMedia } from "./media.ts";
 import { ENTRY_TYPE, findAttachment, type MediaEntryData } from "./media-entry.ts";
 import { readWithMediaModels } from "./media-model.ts";
+import { mediaModelsCommand } from "./media-models-command.ts";
 import { footerStatus, unknownProviderErrors } from "./media-status.ts";
 import { renderMediaText, TEXT_TYPE } from "./media-text.ts";
 import { createMediaReadTool } from "./read-tool.ts";
@@ -28,7 +29,7 @@ export default function (pi: ExtensionAPI) {
 		),
 	);
 
-	pi.on("session_start", (_event, ctx) => {
+	const applySettings = (ctx: ExtensionContext) => {
 		const errors = unknownProviderErrors(path, settings, (provider) => ctx.modelRegistry.getProvider(provider) !== undefined);
 		// Without a UI, as in print mode, `notify` shows nothing.
 		for (const error of errors) {
@@ -37,7 +38,9 @@ export default function (pi: ExtensionAPI) {
 		}
 		enabled = errors.length === 0;
 		ctx.ui.setStatus("pi-media", enabled ? footerStatus(settings) : undefined);
-	});
+	};
+	pi.on("session_start", (_event, ctx) => applySettings(ctx));
+	pi.registerCommand("media-models", mediaModelsCommand(path, settings, applySettings));
 
 	pi.registerMessageRenderer(TEXT_TYPE, renderMediaText);
 
