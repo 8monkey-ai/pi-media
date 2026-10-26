@@ -1,6 +1,6 @@
 # pi-media
 
-pi-media is a [pi](https://github.com/earendil-works/pi) extension that attaches local images, audio, video and PDF files to your message when you write their paths in it. The model can also read audio, video and PDF files with the `read` tool.
+pi-media is a [pi](https://github.com/earendil-works/pi) extension that attaches local images, audio, video and PDF files to your message when you write their paths in it. The model can also read audio, video and PDF files with the `read` tool. For images, audio and PDF files, you can set a media model. It reads the file and gives back text for the main model.
 
 ## Install
 
@@ -16,7 +16,7 @@ what is wrong with this recording? ~/Downloads/debug-session.mp3
 compare @"Q3 report.pdf" with ./q4-report.pdf
 ```
 
-Type a path, drag a file into the terminal, or paste. Your message text stays as you typed it, with the paths in it. If pi-media can send the file to the model (see [What gets attached](#what-gets-attached) and [Providers](#providers)), the model also gets the file. If not, the path stays as text.
+Type a path, drag a file into the terminal, or paste. Your message text stays as you typed it, with the paths in it. If pi-media can send the file to the model (see [What gets attached](#what-gets-attached) and [Providers](#providers)), the model also gets the file. If not, the path stays as text. If you set a media model for the file type, the main model gets the text from the media model in place of the file (see [Media models](#media-models)).
 
 To paste, press Ctrl+V (Alt+V on Windows and WSL):
 
@@ -72,8 +72,8 @@ pi-media attaches a file when all of these conditions are true:
 | Document | PDF |
 
 - pi-media finds the type of a file from its content, not from its file name extension. For images, it uses pi's own image check. For other files, it uses the [`file-type`](https://github.com/sindresorhus/file-type) package. Animated PNG, HEIC and HEIF files do not attach.
-- pi-media gives images to pi. Pi handles them as it handles other images in a message. For example, the settings `images.autoResize` and `images.blockImages` apply, and a model without image input gets a text note instead of the image.
-- pi-media reads an audio, video or PDF file when you send the message. It stores the bytes in the session as base64 text, which is about 1.33 times the file size. It stores the files that the `read` tool reads in the same way.
+- pi-media gives images to pi. Pi handles them as it handles other images in a message. For example, the settings `images.autoResize` and `images.blockImages` apply, and a model without image input gets a text note instead of the image. This does not apply to an image that goes to a media model.
+- pi-media reads an audio, video or PDF file when you send the message. It stores the bytes in the session as base64 text, which is about 1.33 times the file size. It stores the files that the `read` tool reads in the same way. For a file that goes to a media model, pi-media stores only the text.
 - Later turns and resumed sessions use the stored bytes. If you change or delete the file, the model still gets the file as it was when pi-media read it.
 - A file that you name two times in one message attaches one time.
 
@@ -100,11 +100,43 @@ A provider that rejects a part, or a request that is too large, returns an error
 
 All other APIs get no files. Virtual models (`pi-virtual`) also get no files, because pi-media sees only the API `pi-virtual` and not the API of the model that answers.
 
+## Media models
+
+A media model reads a file and gives back text: a description and the text of an image, a transcript of audio, or the text of a PDF. When you set a media model for a file type, pi-media sends each file of that type to it, also when the main model can take the file. The main model gets the text in place of the file, so this works with all main models. Video files always go to the main model.
+
+### Setup
+
+In the terminal UI:
+
+1. Open `/model`, select the main chat model, and press Ctrl+S to save it as the default.
+2. Set the media models with `/media-models`.
+
+Without the terminal UI, write the media models in `pi-media.json` (see [Settings](#settings)).
+
+### The `/media-models` command
+
+`/media-models` asks for a file type, a model and an API. The model list has all models that pi has credentials for. For a model that is not in the list, for example a transcription model, select `Type a model…` and type `provider/model-id`. For a transcription model, select the API `openai-transcriptions`. To remove the setting, select `Not set`. The command saves the setting in `pi-media.json`, and pi-media uses it from the next message.
+
+### How it works
+
+- The media model does not get your message. pi-media uses the credentials and the base URL that pi has for the provider.
+- With `openai-completions`, the media model gets a fixed instruction and the file. This works for images, and for audio and PDF files in the types that [Providers](#providers) lists. Other types, for example Opus audio, give an error note.
+- With `openai-transcriptions`, the media model gets only the file.
+- While the call runs, the terminal UI shows a progress message, for example `Transcribing call.m4a with hebo/gpt-transcribe…`. Esc stops the call and the calls for the next files in the message.
+- If a call fails or Esc stops it, the main model gets an error note in place of the file. The note names the model, the file and the reason, for example `pi-media: hebo/gpt-transcribe could not transcribe call.m4a: 413 File too large.`
+- The text shows in the chat after your message, collapsed. Ctrl+O expands it.
+- pi-media stores the text or the note in the session. Later turns and resumed sessions use it, and do not call the media model again. To try again, send the file again.
+- The footer shows the media models that are set, for example `media: image hebo/gpt-4.1-mini, audio hebo/gpt-transcribe`.
+
 ## The read tool
 
-pi-media registers its own `read` tool in place of pi's `read` tool. The tool description tells the model that the tool also reads audio, video and PDF files. For all other files, images too, the tool runs pi's `read` tool, and the result is the same as without pi-media.
+pi-media registers its own `read` tool in place of pi's `read` tool. The tool description tells the model that the tool also reads audio, video and PDF files. The tool uses the first of these rules that applies to the file:
 
-For an audio, video or PDF file, the tool result is a short note, and the model gets the file with it. For example:
+- If you set a media model for the file type, the tool sends the file to the media model, and the tool result has the text or an error note. Each read calls the media model again.
+- For an audio, video or PDF file, the tool result is a short note, and the model gets the file with it.
+- For all other files, images too, the tool runs pi's `read` tool, and the result is the same as without pi-media.
+
+The note for an audio, video or PDF file has this form:
 
 ```
 Read PDF file [application/pdf]: /Users/me/report.pdf
@@ -130,29 +162,44 @@ pi-media reads its settings from the file `pi-media.json` in the pi agent direct
 
 | Setting | Default | Effect |
 |---|---|---|
-| `maxAttachmentBytes` | `20971520` (20 MiB) | The size in bytes of the largest file that pi-media attaches, from your message or from the `read` tool. pi-media holds each attached file in memory as base64 text, so a larger value can use more memory. |
+| `maxAttachmentBytes` | `20971520` (20 MiB) | The size in bytes of the largest file that pi-media attaches or sends to a media model, from your message or from the `read` tool. pi-media holds each attached file in memory as base64 text, so a larger value can use more memory. |
+| `imageModel` | Not set | The media model for images. |
+| `audioModel` | Not set | The media model for audio files. |
+| `documentModel` | Not set | The media model for PDF files. |
 
-Example, for a limit of 50 MiB:
+A media model setting has these fields. You must set all of them.
+
+| Field | Value |
+|---|---|
+| `provider` | A provider that pi knows, for example `hebo`. |
+| `id` | The model ID at that provider. |
+| `api` | `openai-completions` for a chat model that uses `/chat/completions`, or `openai-transcriptions` for a transcription model that uses `/audio/transcriptions`. |
+
+Example, for a limit of 50 MiB, an image model and an audio model:
 
 ```json
 {
-  "maxAttachmentBytes": 52428800
+  "maxAttachmentBytes": 52428800,
+  "imageModel": { "provider": "hebo", "id": "gpt-4.1-mini", "api": "openai-completions" },
+  "audioModel": { "provider": "hebo", "id": "gpt-transcribe", "api": "openai-transcriptions" }
 }
 ```
 
-- pi-media reads the file when pi loads extensions. After you change the file, run `/reload` or start pi again.
+- pi-media reads the file when pi loads extensions. After you change the file by hand, run `/reload` or start pi again.
 - pi-media ignores keys that it does not know.
-- If pi-media cannot read the file, the file is not a JSON object, or `maxAttachmentBytes` is not a positive integer, pi-media does not load, and pi shows an error with the path of the file.
+- If pi-media cannot read the file, the file is not a JSON object, or a setting has a wrong value, pi-media does not load, and pi shows an error with the path of the file. For a wrong value, the error names the setting.
+- If pi does not know the provider of a media model, pi shows an error when the session starts, and pi-media is off for the session. Files do not attach, and the `read` tool works as pi's `read` tool. To turn pi-media on again, correct the setting with `/media-models`, or correct the file and run `/reload`.
 
 ## Limits
 
 - A path without quotes or backslashes ends at the first space if its line has other text. In `see /Users/me/My File.png`, pi-media looks for `/Users/me/My`, and no file attaches.
 - On Windows, a path with an apostrophe in its file name does not attach in single quotes, for example `'C:\Users\me\it''s.png'`, or with `\'` for the apostrophe, for example `don\'t.png`. PowerShell and Git Bash can write paths in these forms. Use double quotes, or put the path on a line of its own.
-- Audio, video and PDF files do not attach to a message that starts with a skill command (`/skill:name`) or a prompt template command (`/name`). pi-media stores these files in the session, and no message uses them. Images attach.
+- Audio, video and PDF files do not attach to a message that starts with a skill command (`/skill:name`) or a prompt template command (`/name`). pi-media stores these files in the session, and no message uses them. Images attach, and files that go to a media model give their text as usual.
 - A model with `compat.requiresAssistantAfterToolResult` set to `true` gets no files from the `read` tool. Files in your message attach.
 - If a message with files does not get to the model, for example when you clear the message queue or edit a message in the session tree, pi-media keeps its files. A later message with the same text and no files of its own gets these files.
 - If you queue two messages with the same text and the file changes between them, each message can get the file as it was for the other message.
 - If a tool result ends with lines that hold only text of the form `[[pi-media:<id>:<number>]]`, the model can get the tool result without these lines.
+- If you send a message with a file for a media model while the agent works, the main model gets an extra turn with only the text from the media model, before the turn with your message.
 
 ## Requirements
 
