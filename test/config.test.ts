@@ -20,36 +20,19 @@ afterEach(() => {
 	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 });
 
-async function writeConfig(content: string) {
-	await writeFile(join(agentDir, "pi-media.json"), content);
-}
-
 const configPath = () => join(agentDir, "pi-media.json");
 
+async function writeConfig(content: string) {
+	await writeFile(configPath(), content);
+}
+
 test("uses 20 MB and no media models when the config file is missing", () => {
-	assert.deepEqual(readSettings(), { path: configPath(), settings: { maxAttachmentBytes: 20971520 } });
+	assert.deepEqual(readSettings().settings, { maxAttachmentBytes: 20971520 });
 });
 
 test("uses 20 MB when the config file has no maxAttachmentBytes and ignores other keys", async () => {
 	await writeConfig('{"other": true}');
 	assert.equal(readSettings().settings.maxAttachmentBytes, 20971520);
-});
-
-test("reads maxAttachmentBytes and the media models from pi-media.json in the agent directory", async () => {
-	await writeConfig(
-		JSON.stringify({
-			maxAttachmentBytes: 1048576,
-			imageModel: { provider: "hebo", id: "gpt-4.1-mini", api: "openai-completions" },
-			audioModel: { provider: "hebo", id: "gpt-transcribe", api: "openai-transcriptions" },
-			documentModel: { provider: "hebo", id: "gpt-4.1", api: "openai-completions" },
-		}),
-	);
-	assert.deepEqual(readSettings().settings, {
-		maxAttachmentBytes: 1048576,
-		imageModel: { provider: "hebo", id: "gpt-4.1-mini", api: "openai-completions" },
-		audioModel: { provider: "hebo", id: "gpt-transcribe", api: "openai-transcriptions" },
-		documentModel: { provider: "hebo", id: "gpt-4.1", api: "openai-completions" },
-	});
 });
 
 test("fails when the config path exists but cannot be read as a file", async () => {

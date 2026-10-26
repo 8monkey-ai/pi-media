@@ -17,24 +17,28 @@ export default function (pi: ExtensionAPI) {
 	const { path, settings } = readSettings();
 	const { maxAttachmentBytes } = settings;
 	// Pi has no model registry while extensions load, so `session_start` checks the providers.
-	let on = true;
+	let enabled = true;
 	pi.registerTool(
 		createMediaReadTool(
 			() => pi.getSettings().images?.autoResize,
 			maxAttachmentBytes,
-			() => on,
+			() => enabled,
 		),
 	);
 
 	pi.on("session_start", (_event, ctx) => {
 		const errors = unknownProviderErrors(path, settings, (provider) => ctx.modelRegistry.getProvider(provider) !== undefined);
-		for (const error of errors) ctx.ui.notify(error, "error");
-		on = errors.length === 0;
-		ctx.ui.setStatus("pi-media", on ? footerStatus(settings) : undefined);
+		// Without a UI, as in print mode, `notify` shows nothing.
+		for (const error of errors) {
+			if (ctx.hasUI) ctx.ui.notify(error, "error");
+			else console.error(error);
+		}
+		enabled = errors.length === 0;
+		ctx.ui.setStatus("pi-media", enabled ? footerStatus(settings) : undefined);
 	});
 
 	pi.on("input", async (event, ctx) => {
-		if (!on) return { action: "continue" };
+		if (!enabled) return { action: "continue" };
 		const { images, attachments } = await findLocalMedia(event.text, ctx.cwd, maxAttachmentBytes);
 		if (attachments.length > 0) {
 			pi.appendEntry(ENTRY_TYPE, { text: event.text, attachments } satisfies MediaEntryData);
@@ -46,15 +50,14 @@ export default function (pi: ExtensionAPI) {
 	// The files of tool results go in a user message after the tool messages. A model that needs an assistant message
 	// after tool results gets no files from tool results, so that pi-media does not add an assistant message.
 	pi.on("context", (event, ctx) => {
-		if (!on) return undefined;
 		const branch = ctx.sessionManager.getBranch();
-		if (!takesFiles(ctx.model)) return markContext(event.messages, branch);
+		if (!enabled || !takesFiles(ctx.model)) return markContext(event.messages, branch);
 		const toolResultCarries = ctx.model.compat?.requiresAssistantAfterToolResult ? () => false : carries;
 		return markContext(event.messages, branch, carries, toolResultCarries);
 	});
 
 	pi.on("before_provider_request", (event, ctx) => {
-		if (!on || !takesFiles(ctx.model)) return undefined;
+		if (!enabled || !takesFiles(ctx.model)) return undefined;
 		return rewrite(event.payload, (entryId, index) => findAttachment(ctx.sessionManager.getEntry(entryId), index));
 	});
 }

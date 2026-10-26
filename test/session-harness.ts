@@ -36,6 +36,7 @@ type SessionOptions = {
 	tools?: string[];
 	reply?: (messages: Message[]) => AssistantMessage;
 	payload?: (messages: Message[]) => unknown;
+	hasUI?: boolean;
 };
 
 // Extensions find their config through `getAgentDir()`, so it names the session directory while they load.
@@ -52,21 +53,22 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 
 function recordingUI() {
 	const notifications: Array<{ message: string; type?: string }> = [];
-	const statuses: Record<string, string | undefined> = {};
-	// pi copies this object into the UI context of each extension, and only these members exist.
+	const statuses: Record<string, string> = {};
+	// The extensions under test call only `notify` and `setStatus`.
 	const uiContext = {
 		notify: (message, type) => {
 			notifications.push({ message, type });
 		},
 		setStatus: (key, text) => {
-			statuses[key] = text;
+			if (text === undefined) delete statuses[key];
+			else statuses[key] = text;
 		},
 	} as ExtensionUIContext;
 	return { notifications, statuses, uiContext };
 }
 
 // Drives a real pi session with an in-memory session manager and pi-ai's faux provider.
-// Binding the recording UI emits `session_start`, as pi does at startup.
+// Binding the UI emits `session_start`, as pi does at startup.
 // A model call waits until `settle` runs, so a test can queue input while pi streams.
 // `files` go into the working directory, which is also the agent directory.
 // `api` is the API of the model. Its default, Chat Completions, is the shape of the default payload.
@@ -74,6 +76,7 @@ function recordingUI() {
 // `tools` names the active tools.
 // `reply` makes the answer of the model from the request messages, for example a tool call.
 // `payload` makes the provider payload from the request messages.
+// `hasUI: false` binds no UI, as pi does in print mode.
 export async function startSession(
 	extensions: ExtensionFactory[],
 	{
@@ -84,6 +87,7 @@ export async function startSession(
 		tools = [],
 		reply = () => fauxAssistantMessage("ok"),
 		payload: makePayload = userPayload,
+		hasUI = true,
 	}: SessionOptions = {},
 ) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-media-session-"));
@@ -122,7 +126,7 @@ export async function startSession(
 		tools,
 	});
 	const { uiContext, ...ui } = recordingUI();
-	await session.bindExtensions({ uiContext });
+	await session.bindExtensions(hasUI ? { uiContext } : { mode: "print" });
 
 	async function waitForCall() {
 		while (gates.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));

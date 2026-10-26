@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import extension from "../src/index.ts";
 import { MP3_BYTES, MP3_PART, PNG_BYTES, PNG_IMAGE, WAV_BYTES } from "./fixtures.ts";
@@ -143,7 +143,7 @@ test("shows only the media models that are set in the footer", async () => {
 
 test("shows nothing in the footer when no media model is set", async () => {
 	const { ui } = await startSession([extension]);
-	assert.deepEqual(ui, { notifications: [], statuses: { "pi-media": undefined } });
+	assert.deepEqual(ui, { notifications: [], statuses: {} });
 });
 
 test("still attaches a file of a type with a media model to the main model", async () => {
@@ -177,7 +177,7 @@ test("shows an error for each media model with a provider that pi does not know 
 				type: "error",
 			},
 		],
-		statuses: { "pi-media": undefined },
+		statuses: {},
 	});
 	await settle(session.prompt("listen to @a.mp3"));
 	assert.deepEqual(
@@ -187,8 +187,24 @@ test("shows an error for each media model with a provider that pi does not know 
 	assert.deepEqual(requests[0].payload, { messages: [{ role: "user", content: [{ type: "text", text: "listen to @a.mp3" }] }] });
 });
 
+test("writes each unknown provider error to stderr when pi has no UI", async (t) => {
+	const consoleError = t.mock.method(console, "error", () => {});
+	const { dir } = await startSession([extension], {
+		files: { "pi-media.json": JSON.stringify({ audioModel: { ...MODELS.audioModel, provider: "nope" } }) },
+		hasUI: false,
+	});
+	assert.deepEqual(
+		consoleError.mock.calls.map((call) => call.arguments),
+		[
+			[
+				`pi-media: audioModel in ${join(dir, "pi-media.json")}: pi has no provider "nope". Add it in models.json or with an extension. pi-media is off for this session.`,
+			],
+		],
+	);
+});
+
 // The prompt is the marker text of the stored attachment, so that the payload has a marker even when the context hook adds none.
-test("sends no stored file while a media model has a provider that pi does not know", async () => {
+test("gives no file for a marker in the prompt while a media model has a provider that pi does not know", async () => {
 	let entryId = "";
 	const { session, requests, settle } = await startSession([extension], {
 		files: { "pi-media.json": JSON.stringify({ audioModel: { ...MODELS.audioModel, provider: "nope" } }) },
@@ -211,4 +227,41 @@ test("sends no stored file while a media model has a provider that pi does not k
 			{ role: "user", content: [{ type: "text", text: `[[pi-media:${entryId}:0]]` }] },
 		],
 	});
+});
+
+test("tells the model that a stored read of a media file is not in the request while a media model has a provider that pi does not know", async () => {
+	const { session, requests, settle } = await startSession([extension], {
+		files: { "pi-media.json": JSON.stringify({ audioModel: { ...MODELS.audioModel, provider: "nope" } }) },
+		sessionManager: (dir) => {
+			const manager = SessionManager.inMemory(dir);
+			manager.appendMessage({ role: "user", content: [{ type: "text", text: "listen to a.mp3" }], timestamp: 1 });
+			manager.appendMessage(
+				fauxAssistantMessage(fauxToolCall("read", { path: "a.mp3" }, { id: "call-1" }), { stopReason: "toolUse" }),
+			);
+			manager.appendMessage({
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "read",
+				content: [{ type: "text", text: "Read audio file [audio/mpeg]" }],
+				details: { path: join(dir, "a.mp3"), mimeType: "audio/mpeg", data: MP3_BYTES.toString("base64") },
+				isError: false,
+				timestamp: 2,
+			});
+			manager.appendMessage(fauxAssistantMessage("ok"));
+			return manager;
+		},
+	});
+	await settle(session.prompt("again"));
+	assert.deepEqual(
+		requests[0].messages.flatMap((message) => (message.role === "toolResult" ? [message.content] : [])),
+		[
+			[
+				{ type: "text", text: "Read audio file [audio/mpeg]" },
+				{
+					type: "text",
+					text: "[The API of the current model cannot take this file type. The file content is not in this request.]",
+				},
+			],
+		],
+	);
 });
