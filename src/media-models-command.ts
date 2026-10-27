@@ -1,5 +1,6 @@
 import type { ExtensionContext, RegisteredCommand } from "@earendil-works/pi-coding-agent";
 import { MEDIA_KINDS, type MediaKind, type MediaModel, type MediaSetting, type Settings, saveMediaModel } from "./config.ts";
+import { selectFiltering } from "./select-filtering.ts";
 
 type ModelName = Pick<MediaModel, "provider" | "id">;
 
@@ -38,10 +39,9 @@ function modelRows(available: ModelName[], current: ModelName | undefined) {
 	const isCurrent = (model: ModelName) => model.provider === current?.provider && model.id === current.id;
 	const models = current && !available.some(isCurrent) ? [...available, current] : available;
 	const mark = (text: string, marked: boolean) => (marked ? `${text}  ✓` : text);
-	return new Map<string, ModelName | "not set" | "type">([
+	return new Map<string, ModelName | "not set">([
 		[mark("Not set", !current), "not set"],
 		...models.map((model) => [mark(label(model), isCurrent(model)), model] as const),
-		["Type a model…", "type"],
 	]);
 }
 
@@ -66,10 +66,12 @@ async function typeModel(ctx: ExtensionContext, name: string) {
 }
 
 async function selectModel(ctx: ExtensionContext, name: string, current: ModelName | undefined) {
-	const selected = await selectRow(ctx, `${name} model`, modelRows(ctx.modelRegistry.getAvailable(), current));
-	if (selected === undefined || selected === "not set") return selected;
-	const model = selected === "type" ? await typeModel(ctx, name) : selected;
-	if (model === undefined) return undefined;
+	const rows = modelRows(ctx.modelRegistry.getAvailable(), current);
+	const row = await selectFiltering(ctx, `${name} model`, [...rows.keys()], "Type a model…");
+	if (row === undefined) return undefined;
+	// The pinned row is the only row that is not in `rows`.
+	const model = rows.get(row) ?? (await typeModel(ctx, name));
+	if (model === undefined || model === "not set") return model;
 	const api = await selectRow(ctx, `API for ${label(model)}`, apiRows);
 	return api && { provider: model.provider, id: model.id, api };
 }

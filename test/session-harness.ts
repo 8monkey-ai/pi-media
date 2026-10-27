@@ -1,6 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import {
 	type AssistantMessage,
 	type FauxResponseFactory,
@@ -20,6 +21,7 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { getKeybindings } from "@earendil-works/pi-tui";
 
 type ModelRequest = { messages: Message[]; payload: unknown };
 
@@ -56,7 +58,8 @@ async function loadExtensions(resourceLoader: DefaultResourceLoader, agentDir: s
 
 type CustomFactory = Parameters<ExtensionUIContext["custom"]>[0];
 
-// `custom` records the text of each component that it shows, and `press` sends keys to the component that shows now.
+// `custom` records the text of each component that it shows. `press` sends a key to the component that shows now
+// and gives the text of the component after the key.
 function recordingUI(answerList: Array<string | undefined>) {
 	const answers = [...answerList];
 	const notifications: Array<{ message: string; type?: string }> = [];
@@ -70,16 +73,17 @@ function recordingUI(answerList: Array<string | undefined>) {
 	let shown: Awaited<ReturnType<CustomFactory>> | undefined;
 	// Pi's components read the global theme, which pi sets up in the terminal UI.
 	initTheme();
-	const theme = { fg: (_color: string, text: string) => text } as never;
+	const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as never;
+	const text = () => stripVTControlCharacters(shown?.render(80).join("\n") ?? "");
 	const custom = (factory: CustomFactory) =>
 		new Promise((resolve) => {
 			const done = (result: unknown) => {
 				shown?.dispose?.();
 				resolve(result);
 			};
-			void Promise.resolve(factory({ requestRender() {} } as never, theme, {} as never, done)).then((component) => {
+			void Promise.resolve(factory({ requestRender() {} } as never, theme, getKeybindings() as never, done)).then((component) => {
 				shown = component;
-				customs.push(component.render(80).join("\n"));
+				customs.push(text());
 			});
 		});
 	// The extensions under test call only `notify`, `setStatus`, `custom`, `select` and `input`.
@@ -104,7 +108,10 @@ function recordingUI(answerList: Array<string | undefined>) {
 			return answer();
 		},
 	} as ExtensionUIContext;
-	const press = (data: string) => shown?.handleInput?.(data);
+	const press = (data: string) => {
+		shown?.handleInput?.(data);
+		return text();
+	};
 	return { notifications, statuses, customs, dialogs, press, uiContext };
 }
 
