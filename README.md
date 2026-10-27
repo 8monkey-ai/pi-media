@@ -52,9 +52,9 @@ When a media model is set for a type, its text replaces each file of that type, 
 
 1. Run `/media-models`.
 2. Select Image, Audio or Document (PDF).
-3. Select a model that can read that file type. You can type to filter the list, but the list does not show which models can read the type. For another model, select `Type a model…` and type `provider/model-id` for a provider configured in pi.
+3. Select a model that supports the file type.
 4. Select the API:
-   - `openai-completions` uses an OpenAI-compatible `/chat/completions` endpoint. For audio, only the formats in the table above work.
+   - `openai-completions` uses an OpenAI-compatible `/chat/completions` endpoint.
    - `openai-transcriptions` uses an `/audio/transcriptions` endpoint, for audio only.
 
 To send files of a type directly again, select `Not set`.
