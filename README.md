@@ -68,7 +68,7 @@ To send files of a type directly again, select `Not set`.
 
 ## Files the agent reads
 
-The agent can use `read` for images, audio, video and PDF files. A media model set for the type returns text or an error note, and each new read calls it again. Without one, pi handles images and pi-media sends supported audio, video and PDF files directly. Files above the pi-media size limit and unsupported direct reads return a note without the contents.
+The agent can open files with `read`. If you selected a media model for the file type, the agent receives its text output. Otherwise, your chat model receives the file directly. If the file is too large or unsupported, the agent gets an error message.
 
 ## Size limit
 
