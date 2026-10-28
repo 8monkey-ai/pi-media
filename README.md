@@ -1,6 +1,6 @@
 # pi-media
 
-Attach local images, audio, video and PDFs to your [pi](https://github.com/earendil-works/pi) conversations by including their paths in your messages. The agent can also open media files with `read`.
+Attach local images, audio, video and PDFs to your [pi](https://github.com/earendil-works/pi) conversations by including their paths in your messages.
 
 ## Install
 
@@ -18,7 +18,7 @@ summarize this recording: ~/Downloads/standup.mp3
 compare @"Q3 report.pdf" with ./q4-report.pdf
 ```
 
-Type `@` to pick a file, or enter a path starting with `/`, `~/`, `./` or `../`. Put paths with spaces in quotes.
+Type `@` to pick a file, or enter a path starting with `/`, `~/`, `./` or `../`.
 
 ## Send files to your chat model
 
@@ -38,36 +38,25 @@ pi-media can send these formats. Your model may accept only some of them.
 
 ## Use a media model
 
-A media model converts files to text, so you can use them with a chat model that cannot read the originals:
+Configure a media model to convert files to text when a chat model that cannot read them natively:
 
 - Image: a description and the visible text
 - Audio: a transcript
 - PDF: the text, with descriptions of images and charts
 
-Run `/media-models`, choose Image, Audio or Document (PDF), and pick a model that supports that type. Its provider must already be configured in pi and offer an OpenAI-compatible API.
+Run `/media-models`, choose Image, Audio or Document (PDF), and pick a model that supports that type. Its provider must offer an OpenAI-compatible API.
 
 For the API, choose `openai-completions` for chat models or `openai-transcriptions` for speech-to-text models. If the model is not in the list, choose `Type a model…` and enter `provider/model-id`.
 
-When set, the media model handles every file of its type, and your chat model gets only the text. Video has no media model.
-
-Wait for the current response to finish before you send a file for a media model. Otherwise the text can reach the chat model before your question.
+When set, the media model handles every file of its type, and your chat model gets only the text conversion.
 
 ## Size limit
 
-Files you add by path can be up to 20 MiB. To change the limit, add or update `maxAttachmentBytes` in `~/.pi/agent/pi-media.json`, keep any other settings in the file, then run `/reload`. This example sets 50 MiB:
+Files can be up to 20 MiB. To change the limit, add or update `maxAttachmentBytes` in `~/.pi/agent/pi-media.json`, then run `/reload`. For example, set 50 MiB:
 
 ```json
 { "maxAttachmentBytes": 52428800 }
 ```
-
-## Privacy
-
-The chat model's provider receives original attachments, and the session keeps them even if they never reach the model. When a media model handles a file, its provider receives the file, and the session stores the returned text or error instead.
-
-## Troubleshooting
-
-- **The model gets only the path.** Check the file path, size, format and [model support](#send-files-to-your-chat-model).
-- **Requests fail after you add a file.** If the provider rejects an attachment, the attachment stays in the session and can make later requests fail. Use `/tree` to go back to before the file was added or read, or switch to a model that accepts it.
 
 ## License
 
