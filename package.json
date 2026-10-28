@@ -1,6 +1,6 @@
 {
   "name": "@8monkey/pi-media",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Pi extension that attaches local images, audio, video and PDF files when you write their paths in your message, and lets the read tool read audio, video and PDF files.",
   "license": "MIT",
   "type": "module",
